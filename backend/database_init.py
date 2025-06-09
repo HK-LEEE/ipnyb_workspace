@@ -159,50 +159,36 @@ def insert_seed_data(engine):
         db.commit()
         print("그룹 데이터가 생성되었습니다.")
         
-        # 4. 사용자-역할 매핑
+        # 4. 사용자-역할 및 그룹 매핑
         users = db.query(User).all()
         roles = {role.name: role for role in db.query(Role).all()}
-        
-        # 사용자별 역할 할당
-        user_role_mapping = {
-            "admin@jupyter-platform.com": ["admin"],
-            "test@example.com": ["user"],
-            "manager1@jupyter-platform.com": ["manager"],
-            "user1@jupyter-platform.com": ["user"],
-            "dev1@jupyter-platform.com": ["developer", "user"]
-        }
-        
-        for user in users:
-            if user.email in user_role_mapping:
-                for role_name in user_role_mapping[user.email]:
-                    if role_name in roles:
-                        user.roles.append(roles[role_name])
-        
-        db.commit()
-        print("사용자-역할 매핑이 완료되었습니다.")
-        
-        # 5. 사용자-그룹 매핑  
         groups = {group.name: group for group in db.query(Group).all()}
         
-        # 사용자별 그룹 할당
-        user_group_mapping = {
-            "admin@jupyter-platform.com": ["Managers"],
-            "test@example.com": ["Default Users", "Developers"],
-            "manager1@jupyter-platform.com": ["Managers"],
-            "user1@jupyter-platform.com": ["Default Users"],
-            "dev1@jupyter-platform.com": ["Developers", "Default Users"]
+        # 사용자별 역할 및 그룹 할당
+        user_mappings = {
+            "admin@jupyter-platform.com": {"role": "admin", "group": "Managers"},
+            "test@example.com": {"role": "user", "group": "Default Users"},
+            "manager1@jupyter-platform.com": {"role": "manager", "group": "Managers"},
+            "user1@jupyter-platform.com": {"role": "user", "group": "Default Users"},
+            "dev1@jupyter-platform.com": {"role": "user", "group": "Developers"}  # 개발자도 user 역할
         }
         
         for user in users:
-            if user.email in user_group_mapping:
-                for group_name in user_group_mapping[user.email]:
-                    if group_name in groups:
-                        user.groups.append(groups[group_name])
+            if user.email in user_mappings:
+                mapping = user_mappings[user.email]
+                
+                # 역할 할당
+                if mapping["role"] in roles:
+                    user.role_id = roles[mapping["role"]].id
+                    
+                # 그룹 할당
+                if mapping["group"] in groups:
+                    user.group_id = groups[mapping["group"]].id
         
         db.commit()
-        print("사용자-그룹 매핑이 완료되었습니다.")
+        print("사용자-역할 및 그룹 매핑이 완료되었습니다.")
         
-        # 6. 샘플 워크스페이스 생성
+        # 5. 샘플 워크스페이스 생성
         admin_user = db.query(User).filter(User.email == "admin@jupyter-platform.com").first()
         test_user = db.query(User).filter(User.email == "test@example.com").first()
         

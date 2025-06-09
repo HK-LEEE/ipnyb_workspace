@@ -1,26 +1,9 @@
-from sqlalchemy import Column, Integer, String, DateTime, Boolean, Text, ForeignKey, Table
+from sqlalchemy import Column, Integer, String, DateTime, Boolean, Text, ForeignKey
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.mysql import CHAR
 import uuid
 from ..database import Base
-
-# 다대다 관계를 위한 연결 테이블들 (UUID 기반으로 변경)
-user_group_mapping = Table(
-    'user_group_mapping',
-    Base.metadata,
-    Column('user_id', CHAR(36), ForeignKey('users.id'), primary_key=True),
-    Column('group_id', Integer, ForeignKey('groups.id'), primary_key=True),
-    Column('joined_at', DateTime, default=func.now())
-)
-
-user_role_mapping = Table(
-    'user_role_mapping',
-    Base.metadata,
-    Column('user_id', CHAR(36), ForeignKey('users.id'), primary_key=True),
-    Column('role_id', Integer, ForeignKey('roles.id'), primary_key=True),
-    Column('assigned_at', DateTime, default=func.now())
-)
 
 def generate_user_id():
     """사용자 고유 ID 생성 (UUID 기반)"""
@@ -46,6 +29,10 @@ class User(Base):
     is_admin = Column(Boolean, default=False)
     is_verified = Column(Boolean, default=False, comment="이메일 인증 여부")
     
+    # 역할 및 그룹 (직접 참조로 변경)
+    role_id = Column(Integer, ForeignKey('roles.id'), nullable=True, comment="사용자 역할 ID")
+    group_id = Column(Integer, ForeignKey('groups.id'), nullable=True, comment="사용자 그룹 ID")
+    
     # 추가 정보
     department = Column(String(100), nullable=True, comment="부서")
     position = Column(String(100), nullable=True, comment="직책")
@@ -57,10 +44,10 @@ class User(Base):
     last_login_at = Column(DateTime, nullable=True)
     login_count = Column(Integer, default=0, comment="로그인 횟수")
     
-    # 관계 정의
+    # 관계 정의 (직접 참조로 변경)
     workspaces = relationship("Workspace", back_populates="owner")
-    groups = relationship("Group", secondary=user_group_mapping, back_populates="members")
-    roles = relationship("Role", secondary=user_role_mapping, back_populates="users")
+    role = relationship("Role", foreign_keys=[role_id], back_populates="users")
+    group = relationship("Group", foreign_keys=[group_id], back_populates="members")
 
 class Group(Base):
     __tablename__ = "groups"
@@ -72,8 +59,8 @@ class Group(Base):
     created_at = Column(DateTime, default=func.now())
     created_by = Column(CHAR(36), ForeignKey('users.id'), nullable=False)  # UUID로 변경
     
-    # 관계 정의
-    members = relationship("User", secondary=user_group_mapping, back_populates="groups")
+    # 관계 정의 (1:N 관계로 변경)
+    members = relationship("User", foreign_keys='User.group_id', back_populates="group")
     creator = relationship("User", foreign_keys=[created_by])
 
 class Role(Base):
@@ -86,5 +73,5 @@ class Role(Base):
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=func.now())
     
-    # 관계 정의
-    users = relationship("User", secondary=user_role_mapping, back_populates="roles") 
+    # 관계 정의 (1:N 관계로 변경)
+    users = relationship("User", foreign_keys='User.role_id', back_populates="role") 

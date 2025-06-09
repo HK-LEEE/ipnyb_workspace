@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # 라우터 import
-from app.routers import auth, workspace, jupyter, files
+from app.routers import auth, workspace, jupyter, files, llm
 from app.database import get_db
 from app.models import User
 
@@ -44,6 +44,7 @@ app.include_router(auth.router, prefix="/api/auth", tags=["authentication"])
 app.include_router(workspace.router, prefix="/api", tags=["workspaces"])
 app.include_router(jupyter.router, prefix="/api", tags=["jupyter"])
 app.include_router(files.router, prefix="/api", tags=["files"])
+app.include_router(llm.router, prefix="/api", tags=["llm"])
 
 # 기본 라우트
 @app.get("/")

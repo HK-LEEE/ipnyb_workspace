@@ -37,7 +37,9 @@ export interface AuthContextType {
 
 export interface JupyterStatus {
   workspace_id: number
+  status: string  // 'stopped', 'starting', 'running', 'error'
   is_running: boolean
   port?: number
   url?: string
+  last_updated?: string
 } 

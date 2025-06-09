@@ -84,6 +84,9 @@ python init_db.py
 # 워크스페이스 테이블 마이그레이션
 python migrate_workspace.py
 
+# 워크스페이스 폴더 구조 마이그레이션 (기존 시스템 업그레이드 시)
+python migrate_workspace_structure.py
+
 # 서버 시작
 python main.py
 ```
@@ -165,9 +168,91 @@ jupyter-platform/
 │   │   └── services/      # API 서비스
 │   └── package.json       # Node.js 의존성
 ├── data/                  # 사용자 워크스페이스 데이터
-│   └── users/            # UUID 기반 사용자 폴더
+│   └── users/            # UUID/워크스페이스 ID 기반 폴더
+│       └── {user_id}/    # 사용자별 폴더
+│           └── {workspace_id}/  # 워크스페이스별 폴더
 └── README.md
 ```
+
+## 워크스페이스 구조 개선
+
+### 📁 새로운 폴더 구조
+기존의 `data/users/{user_id}` 구조에서 `data/users/{user_id}/{workspace_id}` 구조로 변경되었습니다.
+
+**변경 전:**
+```
+data/
+└── users/
+    ├── user-uuid-1/        # 모든 워크스페이스가 혼재
+    │   ├── notebooks/
+    │   ├── data/
+    │   └── outputs/
+    └── user-uuid-2/
+        ├── notebooks/
+        ├── data/
+        └── outputs/
+```
+
+**변경 후:**
+```
+data/
+└── users/
+    ├── user-uuid-1/
+    │   ├── 1/              # 워크스페이스 ID별 분리
+    │   │   ├── notebooks/
+    │   │   ├── data/
+    │   │   └── outputs/
+    │   └── 2/
+    │       ├── notebooks/
+    │       ├── data/
+    │       └── outputs/
+    └── user-uuid-2/
+        └── 1/
+            ├── notebooks/
+            ├── data/
+            └── outputs/
+```
+
+### 🔄 마이그레이션 방법
+기존 시스템을 업그레이드하는 경우:
+
+1. **Windows 배치 파일 사용:**
+   ```cmd
+   migrate_workspace_structure.bat
+   ```
+
+2. **Python 스크립트 직접 실행:**
+   ```bash
+   cd backend
+   python migrate_workspace_structure.py
+   ```
+
+### ✅ 개선 효과
+- **워크스페이스 격리**: 각 워크스페이스가 독립적인 폴더를 가짐
+- **데이터 정리**: 프로젝트별 데이터 관리가 명확해짐
+- **확장성**: 사용자당 여러 워크스페이스 지원
+- **백업 용이**: 워크스페이스별 개별 백업 가능
+
+## 🚀 동적 포트 관리 시스템
+
+### 📡 포트 충돌 방지
+기존에는 모든 Jupyter 인스턴스가 8888 포트를 사용하여 충돌이 발생했지만, 이제 동적 포트 할당으로 해결되었습니다.
+
+**개선된 포트 관리:**
+- **포트 범위**: 8888-9100 (총 212개 포트 사용 가능)
+- **데이터베이스 기반 중복 체크**: 현재 사용 중인 포트 실시간 확인
+- **랜덤 포트 할당**: 충돌 가능성 최소화
+- **이중 체크 시스템**: 소켓 바인드 테스트로 포트 사용 가능성 검증
+
+### 🔄 워크스페이스 상태 관리
+- **실시간 상태 추적**: `stopped`, `starting`, `running`, `error`
+- **자동 상태 동기화**: 프로세스 상태와 데이터베이스 상태 일치
+- **강화된 오류 처리**: 시작/중지 실패 시 안전한 상태 복구
+
+### 💡 사용자 경험 개선
+- **동시 실행**: 하나의 계정으로 여러 워크스페이스 동시 실행 가능
+- **포트 자동 할당**: 사용자가 포트를 신경 쓸 필요 없음
+- **안정성 향상**: 기존 세션이 새로운 세션으로 인해 종료되지 않음
 
 ## 보안 고려사항
 
@@ -179,9 +264,35 @@ jupyter-platform/
 ## 문제 해결
 
 ### 일반적인 문제
-1. **Jupyter Lab이 시작되지 않음**: 포트 충돌 확인 (8888-9000 범위)
+1. **Jupyter Lab이 시작되지 않음**: 포트 충돌 확인 (8888-9100 범위)
 2. **파일 업로드 실패**: 워크스페이스 디렉토리 권한 확인
 3. **데이터베이스 연결 오류**: .env 파일의 데이터베이스 설정 확인
+4. **커널 시작 오류 ("Error Starting Kernel")**:
+   ```cmd
+   # Windows에서 커널 설정 도구 실행
+   setup_jupyter_kernel.bat
+   
+   # 또는 직접 실행
+   cd backend
+   python setup_jupyter_kernel.py
+   ```
+
+### 커널 문제 해결
+JupyterLab에서 "Error Starting Kernel" 오류가 발생하는 경우:
+
+1. **자동 해결**: `setup_jupyter_kernel.bat` 실행
+2. **수동 해결**:
+   ```bash
+   cd backend
+   venv\Scripts\activate
+   python -m pip install ipykernel jupyter-server jupyter-client
+   python -m ipykernel install --user --display-name "Python 3 (ipynb_workspace)"
+   ```
+3. **커널 상태 확인**:
+   ```bash
+   jupyter kernelspec list
+   python -c "import jupyter, jupyterlab, ipykernel; print('OK')"
+   ```
 
 ### 로그 확인
 - 백엔드 로그: 터미널에서 실시간 확인
@@ -205,5 +316,5 @@ jupyter-platform/
 
 
 
-admin@jupyter-platform.com
+ㅊㅇ 
 admin123!"# ipnyb_workspace" 

@@ -10,6 +10,7 @@ import json
 import re
 import os
 from dotenv import load_dotenv
+from sqlalchemy.sql import func
 
 from ..database import get_db
 from ..models import User, Role, Group
@@ -141,11 +142,6 @@ def authenticate_user(db: Session, email: str, password: str):
     if not verify_password(password, user.hashed_password):
         return False
     
-    # 로그인 횟수 증가 및 마지막 로그인 시간 업데이트
-    user.login_count += 1
-    user.last_login_at = datetime.utcnow()
-    db.commit()
-    
     return user
 
 def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
@@ -214,13 +210,14 @@ async def register(user_data: UserCreate, db: Session = Depends(get_db)):
     # 기본 역할 및 그룹 할당
     user_role = db.query(Role).filter(Role.name == "user").first()
     if user_role:
-        new_user.roles.append(user_role)
+        new_user.role_id = user_role.id
         
     default_group = db.query(Group).filter(Group.name == "Default Users").first()
     if default_group:
-        new_user.groups.append(default_group)
+        new_user.group_id = default_group.id
     
     db.commit()
+    db.refresh(new_user)  # 관계 데이터 로드
     
     # JWT 토큰 생성 (UUID 사용)
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
@@ -241,8 +238,8 @@ async def register(user_data: UserCreate, db: Session = Depends(get_db)):
         "is_admin": new_user.is_admin,
         "is_verified": new_user.is_verified,
         "login_count": new_user.login_count,
-        "roles": [{"id": role.id, "name": role.name} for role in new_user.roles],
-        "groups": [{"id": group.id, "name": group.name} for group in new_user.groups]
+        "roles": [{"id": new_user.role.id, "name": new_user.role.name}] if new_user.role else [],
+        "groups": [{"id": new_user.group.id, "name": new_user.group.name}] if new_user.group else []
     }
     
     return {
@@ -267,6 +264,12 @@ async def login(user_data: UserLogin, db: Session = Depends(get_db)):
             detail="비활성화된 계정입니다."
         )
     
+    # 로그인 카운트 증가
+    user.login_count += 1
+    user.last_login_at = func.now()
+    db.commit()
+    db.refresh(user)  # 관계 데이터 로드
+    
     # JWT 토큰 생성 (UUID 사용)
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
@@ -286,8 +289,8 @@ async def login(user_data: UserLogin, db: Session = Depends(get_db)):
         "is_admin": user.is_admin,
         "is_verified": user.is_verified,
         "login_count": user.login_count,
-        "roles": [{"id": role.id, "name": role.name} for role in user.roles],
-        "groups": [{"id": group.id, "name": group.name} for group in user.groups]
+        "roles": [{"id": user.role.id, "name": user.role.name}] if user.role else [],
+        "groups": [{"id": user.group.id, "name": user.group.name}] if user.group else []
     }
     
     return {
@@ -336,8 +339,11 @@ async def reset_password(reset_data: PasswordReset, db: Session = Depends(get_db
     }
 
 @router.get("/me", response_model=UserResponse)
-async def get_current_user_info(current_user: User = Depends(get_current_user)):
+async def get_current_user_info(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """현재 로그인한 사용자 정보 반환"""
+    # 관계 데이터를 명시적으로 로드
+    db.refresh(current_user)
+    
     return UserResponse(
         id=current_user.id,
         real_name=current_user.real_name,
@@ -352,8 +358,8 @@ async def get_current_user_info(current_user: User = Depends(get_current_user)):
         created_at=current_user.created_at,
         last_login_at=current_user.last_login_at,
         login_count=current_user.login_count,
-        roles=[{"id": role.id, "name": role.name, "description": role.description} for role in current_user.roles],
-        groups=[{"id": group.id, "name": group.name, "description": group.description} for group in current_user.groups]
+        roles=[{"id": current_user.role.id, "name": current_user.role.name, "description": current_user.role.description}] if current_user.role else [],
+        groups=[{"id": current_user.group.id, "name": current_user.group.name, "description": current_user.group.description}] if current_user.group else []
     )
 
 @router.post("/logout")

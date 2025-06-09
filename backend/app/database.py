@@ -3,6 +3,7 @@ import logging
 from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 from dotenv import load_dotenv
+from .config import settings
 
 # .env 파일 로드
 load_dotenv()
@@ -14,54 +15,89 @@ logger = logging.getLogger(__name__)
 # 베이스 클래스 생성
 Base = declarative_base()
 
-def get_database_url():
-    """환경변수에 따라 데이터베이스 URL 반환"""
-    # DATABASE_URL이 직접 설정되어 있는 경우
-    database_url = os.getenv("DATABASE_URL")
-    if database_url:
-        return database_url
+def get_database_engine():
+    """데이터베이스 타입에 따라 적절한 엔진 생성"""
+    database_url = settings.database_url
+    database_type = settings.database_type.lower()
     
-    # 개별 설정값으로 URL 구성
-    user = os.getenv("DB_USER", "test")
-    password = os.getenv("DB_PASSWORD", "test")
-    host = os.getenv("DB_HOST", "localhost")
-    port = os.getenv("DB_PORT", "3306")
-    database = os.getenv("DB_NAME", "jupyter_platform")
-    return f"mysql+pymysql://{user}:{password}@{host}:{port}/{database}"
-
-# 데이터베이스 엔진 생성 (호환성 향상을 위한 설정 추가)
-database_url = get_database_url()
-
-try:
-    engine = create_engine(
-        database_url,
-        echo=False,
-        pool_recycle=3600,
-        pool_pre_ping=True,
-        connect_args={"charset": "utf8mb4"},
-        pool_timeout=30,
-        max_overflow=0
-    )
+    # 공통 엔진 설정
+    common_args = {
+        "echo": False,
+        "pool_recycle": 3600,
+        "pool_pre_ping": True,
+        "pool_timeout": 30,
+        "max_overflow": 0
+    }
     
-    # 연결 테스트
-    with engine.connect() as connection:
-        logger.info("MySQL 데이터베이스 연결 성공")
+    try:
+        if database_type == "mysql":
+            # MySQL 설정
+            engine = create_engine(
+                database_url,
+                connect_args={"charset": "utf8mb4"},
+                **common_args
+            )
+            logger.info(f"MySQL 데이터베이스 연결 시도: {database_url.split('@')[1] if '@' in database_url else 'localhost'}")
+            
+        elif database_type == "mssql":
+            # MSSQL 설정
+            engine = create_engine(
+                database_url,
+                connect_args={
+                    "TrustServerCertificate": "yes",
+                    "Encrypt": "no"
+                },
+                **common_args
+            )
+            logger.info(f"MSSQL 데이터베이스 연결 시도: {database_url.split('@')[1] if '@' in database_url else 'localhost'}")
+            
+        else:
+            # 기본값은 MySQL
+            engine = create_engine(
+                settings.mysql_database_url,
+                connect_args={"charset": "utf8mb4"},
+                **common_args
+            )
+            logger.warning(f"알 수 없는 데이터베이스 타입: {database_type}. MySQL을 기본값으로 사용합니다.")
         
-except Exception as e:
-    logger.error(f"MySQL 연결 실패: {e}")
-    logger.info("MySQL 서버가 실행되고 있는지 확인하세요.")
-    logger.info("다음 방법 중 하나를 사용하여 MySQL을 설치/실행하세요:")
-    logger.info("1. XAMPP 설치 후 MySQL 시작")
-    logger.info("2. MySQL Server 직접 설치")
-    logger.info("3. Docker로 MySQL 컨테이너 실행")
-    
-    # 연결 실패시에도 engine 객체 생성 (일부 기능은 제한됨)
-    engine = create_engine(
-        database_url,
-        echo=False,
-        strategy='mock',
-        executor=lambda sql, *_: None
-    )
+        # 연결 테스트
+        with engine.connect() as connection:
+            if database_type == "mysql":
+                logger.info("✅ MySQL 데이터베이스 연결 성공")
+            elif database_type == "mssql":
+                logger.info("✅ MSSQL 데이터베이스 연결 성공")
+            else:
+                logger.info("✅ 데이터베이스 연결 성공")
+                
+        return engine
+        
+    except Exception as e:
+        logger.error(f"❌ {database_type.upper()} 연결 실패: {e}")
+        
+        if database_type == "mysql":
+            logger.info("MySQL 서버가 실행되고 있는지 확인하세요.")
+            logger.info("설치 방법:")
+            logger.info("1. XAMPP 설치 후 MySQL 시작")
+            logger.info("2. MySQL Server 직접 설치")
+            logger.info("3. Docker: docker run -d -p 3306:3306 -e MYSQL_ROOT_PASSWORD=root mysql:8.0")
+        elif database_type == "mssql":
+            logger.info("SQL Server가 실행되고 있는지 확인하세요.")
+            logger.info("설치 방법:")
+            logger.info("1. SQL Server Express 설치")
+            logger.info("2. Docker: docker run -d -p 1433:1433 -e SA_PASSWORD=YourPassword123 -e ACCEPT_EULA=Y mcr.microsoft.com/mssql/server:2019-latest")
+            logger.info("3. ODBC Driver 17 for SQL Server 설치 필요")
+        
+        # 연결 실패시에도 mock 엔진 생성 (개발 환경에서 서버 시작 가능)
+        engine = create_engine(
+            "sqlite:///:memory:",  # 임시 SQLite 메모리 DB
+            echo=False
+        )
+        logger.warning("⚠️  Mock 데이터베이스를 사용합니다. 일부 기능이 제한될 수 있습니다.")
+        
+        return engine
+
+# 데이터베이스 엔진 생성
+engine = get_database_engine()
 
 # 세션 팩토리 생성
 SessionLocal = sessionmaker(
@@ -90,16 +126,21 @@ def create_tables():
     """모든 테이블 생성"""
     try:
         Base.metadata.create_all(bind=engine)
-        logger.info("데이터베이스 테이블 생성 완료")
+        logger.info("✅ 데이터베이스 테이블 생성 완료")
     except Exception as e:
-        logger.error(f"테이블 생성 실패: {e}")
+        logger.error(f"❌ 테이블 생성 실패: {e}")
         raise
 
 def test_connection():
     """데이터베이스 연결 테스트"""
     try:
         with engine.connect() as connection:
-            result = connection.execute("SELECT 1").fetchone()
+            if settings.database_type.lower() == "mysql":
+                result = connection.execute("SELECT 1").fetchone()
+            elif settings.database_type.lower() == "mssql":
+                result = connection.execute("SELECT 1").fetchone()
+            else:
+                result = connection.execute("SELECT 1").fetchone()
             return True
     except Exception as e:
         logger.error(f"연결 테스트 실패: {e}")

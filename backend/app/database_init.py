@@ -93,18 +93,15 @@ def init_database():
         admin_user = db.query(User).filter(User.email == "admin@jupyter-platform.com").first()
         if not admin_user:
             admin_user = User(
-                username="admin",
+                real_name="시스템 관리자",
+                display_name="Admin",
                 email="admin@jupyter-platform.com",
                 hashed_password=hash_password("admin123!"),
                 is_active=True,
-                is_admin=True
+                is_admin=True,
+                role_id=admin_role.id  # 역할 직접 할당
             )
             db.add(admin_user)
-            db.commit()
-            db.refresh(admin_user)
-            
-            # Admin 역할 할당
-            admin_user.roles.append(admin_role)
             print("  ✅ Admin 사용자 생성 (email: admin@jupyter-platform.com, password: admin123!)")
         
         # 기본 그룹 생성
@@ -113,9 +110,11 @@ def init_database():
             default_group = Group(
                 name="Default Users",
                 description="모든 신규 사용자가 자동으로 가입되는 기본 그룹",
-                created_by=admin_user.id
+                created_by=admin_user.id if admin_user else None
             )
             db.add(default_group)
+            db.commit()  # 그룹을 먼저 커밋
+            db.refresh(default_group)
             print("  ✅ 기본 그룹 생성")
         
         # 개발자 그룹 생성
@@ -124,29 +123,30 @@ def init_database():
             dev_group = Group(
                 name="Developers",
                 description="데이터 과학자 및 개발자 그룹",
-                created_by=admin_user.id
+                created_by=admin_user.id if admin_user else None
             )
             db.add(dev_group)
             print("  ✅ 개발자 그룹 생성")
+        
+        # Admin 사용자의 그룹 할당
+        if admin_user and not admin_user.group_id:
+            admin_user.group_id = default_group.id
         
         # 테스트 사용자 생성
         print("🧪 테스트 사용자 생성 중...")
         test_user = db.query(User).filter(User.email == "test@example.com").first()
         if not test_user:
             test_user = User(
-                username="testuser",
+                real_name="테스트 사용자",
+                display_name="Test User",
                 email="test@example.com",
                 hashed_password=hash_password("test123!"),
                 is_active=True,
-                is_admin=False
+                is_admin=False,
+                role_id=user_role.id,  # 역할 직접 할당
+                group_id=default_group.id  # 그룹 직접 할당
             )
             db.add(test_user)
-            db.commit()
-            db.refresh(test_user)
-            
-            # User 역할 할당
-            test_user.roles.append(user_role)
-            test_user.groups.append(default_group)
             print("  ✅ 테스트 사용자 생성 (email: test@example.com, password: test123!)")
         
         # 최종 커밋

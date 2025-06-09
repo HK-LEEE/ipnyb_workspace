@@ -11,19 +11,24 @@ class WorkspaceService:
     
     def create_workspace(self, workspace_data: WorkspaceCreate, user: User):
         """새 워크스페이스 생성"""
-        # 사용자 ID 기반으로 워크스페이스 디렉토리 생성
-        workspace_path = create_workspace_directory(user.id)
-        
-        # 데이터베이스에 워크스페이스 정보 저장
+        # 먼저 데이터베이스에 워크스페이스 정보 저장 (경로는 나중에 설정)
         db_workspace = Workspace(
             name=workspace_data.name,
             description=workspace_data.description,
-            path=workspace_path,
+            path="",  # 임시로 빈 값
             owner_id=user.id
         )
         self.db.add(db_workspace)
         self.db.commit()
         self.db.refresh(db_workspace)
+        
+        # 생성된 워크스페이스 ID를 사용하여 디렉토리 생성
+        workspace_path = create_workspace_directory(user.id, db_workspace.id)
+        
+        # 경로 업데이트
+        db_workspace.path = workspace_path
+        self.db.commit()
+        
         return db_workspace
     
     def get_user_workspaces(self, user_id: str) -> List[Workspace]:
