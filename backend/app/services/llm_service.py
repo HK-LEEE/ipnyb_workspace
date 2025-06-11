@@ -1,280 +1,372 @@
-import asyncio
-import aiohttp
-import json
-import logging
-from typing import Dict, List, Optional, AsyncGenerator, Union
-from enum import Enum
-from dataclasses import dataclass
+"""
+LLM 서비스 - Azure OpenAI와 Ollama 지원
+Jupyter 노트북 분석 및 수정 지원
+"""
 
-from openai import AsyncAzureOpenAI
+import json
+import aiohttp
+import asyncio
+from typing import Optional, Dict, Any, List
 from ..config import settings
+import logging
 
 logger = logging.getLogger(__name__)
 
-class LLMProvider(str, Enum):
-    AZURE = "azure"
-    OLLAMA = "ollama"
-
-@dataclass
-class ChatMessage:
-    role: str  # "user", "assistant", "system"
-    content: str
-
-@dataclass
-class LLMResponse:
-    content: str
-    provider: LLMProvider
-    model: str
-    tokens_used: Optional[int] = None
-
 class LLMService:
     def __init__(self):
-        self.azure_client = None
-        self.ollama_session = None
-        self._initialize_clients()
+        self.azure_available = False
+        self.ollama_available = False
+        self._check_availability()
     
-    def _initialize_clients(self):
-        """LLM 클라이언트들 초기화"""
-        # Azure OpenAI 클라이언트 초기화
-        if settings.azure_openai_endpoint and settings.azure_openai_api_key:
-            try:
-                self.azure_client = AsyncAzureOpenAI(
-                    azure_endpoint=settings.azure_openai_endpoint,
-                    api_key=settings.azure_openai_api_key,
-                    api_version=settings.azure_openai_api_version
-                )
-                logger.info("Azure OpenAI 클라이언트 초기화 완료")
-            except Exception as e:
-                logger.error(f"Azure OpenAI 클라이언트 초기화 실패: {e}")
-        
-        # Ollama용 aiohttp 세션은 필요할 때 생성
-    
-    async def get_available_models(self, provider: LLMProvider) -> List[str]:
-        """사용 가능한 모델 목록 반환"""
-        if provider == LLMProvider.AZURE:
-            return [settings.azure_openai_deployment_name] if self.azure_client else []
-        
-        elif provider == LLMProvider.OLLAMA:
-            try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(f"{settings.ollama_base_url}/api/tags") as response:
-                        if response.status == 200:
-                            data = await response.json()
-                            return [model["name"] for model in data.get("models", [])]
-            except Exception as e:
-                logger.error(f"Ollama 모델 목록 조회 실패: {e}")
-        
-        return []
-    
-    async def chat_completion(
-        self, 
-        messages: List[ChatMessage], 
-        provider: LLMProvider,
-        model: Optional[str] = None,
-        stream: bool = False
-    ) -> Union[LLMResponse, AsyncGenerator[str, None]]:
-        """채팅 완성 요청"""
-        
-        if provider == LLMProvider.AZURE:
-            return await self._azure_chat_completion(messages, model, stream)
-        elif provider == LLMProvider.OLLAMA:
-            return await self._ollama_chat_completion(messages, model, stream)
+    def _check_availability(self):
+        """LLM 서비스 가용성 확인"""
+        # Azure OpenAI 설정 확인
+        if (settings.azure_openai_endpoint and 
+            settings.azure_openai_api_key and 
+            settings.azure_openai_deployment_name):
+            self.azure_available = True
+            logger.info("Azure OpenAI 설정 확인됨")
         else:
-            raise ValueError(f"지원하지 않는 LLM 제공자: {provider}")
+            logger.warning("Azure OpenAI 설정이 불완전합니다")
+        
+        # Ollama 설정 확인 (기본값이라도 체크)
+        if settings.ollama_base_url:
+            self.ollama_available = True
+            logger.info(f"Ollama 설정 확인됨: {settings.ollama_base_url}")
+        else:
+            logger.warning("Ollama 설정이 없습니다")
     
-    async def _azure_chat_completion(
-        self, 
-        messages: List[ChatMessage], 
-        model: Optional[str] = None,
-        stream: bool = False
-    ) -> Union[LLMResponse, AsyncGenerator[str, None]]:
-        """Azure OpenAI 채팅 완성"""
-        if not self.azure_client:
-            raise ValueError("Azure OpenAI 클라이언트가 초기화되지 않았습니다")
-        
-        model_name = model or settings.azure_openai_deployment_name
-        
-        # ChatMessage를 OpenAI 형식으로 변환
-        openai_messages = [{"role": msg.role, "content": msg.content} for msg in messages]
-        
+    def parse_notebook_content(self, notebook_json: str) -> Dict[str, Any]:
+        """노트북 JSON을 파싱하여 구조화된 정보 반환"""
         try:
-            if stream:
-                return self._azure_stream_completion(openai_messages, model_name)
-            else:
-                response = await self.azure_client.chat.completions.create(
-                    model=model_name,
-                    messages=openai_messages,
-                    max_tokens=settings.max_tokens,
-                    temperature=settings.temperature
-                )
-                
-                return LLMResponse(
-                    content=response.choices[0].message.content,
-                    provider=LLMProvider.AZURE,
-                    model=model_name,
-                    tokens_used=response.usage.total_tokens if response.usage else None
-                )
-        except Exception as e:
-            logger.error(f"Azure OpenAI API 호출 실패: {e}")
-            raise
-    
-    async def _azure_stream_completion(self, messages: List[dict], model: str) -> AsyncGenerator[str, None]:
-        """Azure OpenAI 스트리밍 완성"""
-        try:
-            stream = await self.azure_client.chat.completions.create(
-                model=model,
-                messages=messages,
-                max_tokens=settings.max_tokens,
-                temperature=settings.temperature,
-                stream=True
-            )
+            notebook = json.loads(notebook_json) if isinstance(notebook_json, str) else notebook_json
             
-            async for chunk in stream:
-                if chunk.choices[0].delta.content:
-                    yield chunk.choices[0].delta.content
-                    
+            cells_info = []
+            code_cells = []
+            markdown_cells = []
+            
+            for i, cell in enumerate(notebook.get('cells', [])):
+                cell_info = {
+                    'index': i,
+                    'cell_type': cell.get('cell_type', ''),
+                    'source': ''.join(cell.get('source', [])),
+                    'execution_count': cell.get('execution_count'),
+                    'outputs': []
+                }
+                
+                # 셀 출력 정보 추가
+                if 'outputs' in cell:
+                    for output in cell['outputs']:
+                        if output.get('output_type') == 'execute_result':
+                            if 'data' in output and 'text/plain' in output['data']:
+                                cell_info['outputs'].append({
+                                    'type': 'result',
+                                    'data': ''.join(output['data']['text/plain'])
+                                })
+                        elif output.get('output_type') == 'stream':
+                            cell_info['outputs'].append({
+                                'type': 'stream',
+                                'name': output.get('name', 'stdout'),
+                                'text': ''.join(output.get('text', []))
+                            })
+                        elif output.get('output_type') == 'error':
+                            cell_info['outputs'].append({
+                                'type': 'error',
+                                'ename': output.get('ename', ''),
+                                'evalue': output.get('evalue', ''),
+                                'traceback': output.get('traceback', [])
+                            })
+                
+                cells_info.append(cell_info)
+                
+                if cell.get('cell_type') == 'code':
+                    code_cells.append(cell_info)
+                elif cell.get('cell_type') == 'markdown':
+                    markdown_cells.append(cell_info)
+            
+            return {
+                'total_cells': len(cells_info),
+                'code_cells_count': len(code_cells),
+                'markdown_cells_count': len(markdown_cells),
+                'cells': cells_info,
+                'code_cells': code_cells,
+                'markdown_cells': markdown_cells,
+                'metadata': notebook.get('metadata', {})
+            }
+            
         except Exception as e:
-            logger.error(f"Azure OpenAI 스트림 완성 실패: {e}")
-            raise
+            logger.error(f"노트북 파싱 오류: {e}")
+            return {
+                'total_cells': 0,
+                'code_cells_count': 0,
+                'markdown_cells_count': 0,
+                'cells': [],
+                'code_cells': [],
+                'markdown_cells': [],
+                'metadata': {},
+                'error': str(e)
+            }
     
-    async def _ollama_chat_completion(
-        self, 
-        messages: List[ChatMessage], 
-        model: Optional[str] = None,
-        stream: bool = False
-    ) -> Union[LLMResponse, AsyncGenerator[str, None]]:
-        """Ollama 채팅 완성"""
-        model_name = model or settings.ollama_default_model
+    def extract_cell_context(self, parsed_notebook: Dict[str, Any], cell_indices: List[int] = None) -> str:
+        """특정 셀들의 컨텍스트를 추출하여 LLM에 전달할 형태로 구성"""
+        if not parsed_notebook.get('cells'):
+            return "빈 노트북입니다."
         
-        # Ollama API 형식으로 변환
-        ollama_messages = [{"role": msg.role, "content": msg.content} for msg in messages]
+        context_parts = []
+        cells_to_include = parsed_notebook['cells']
+        
+        # 특정 셀 인덱스가 지정된 경우 해당 셀들만 포함
+        if cell_indices is not None:
+            cells_to_include = [cell for cell in parsed_notebook['cells'] 
+                             if cell['index'] in cell_indices]
+        
+        for cell in cells_to_include:
+            if cell['cell_type'] == 'code':
+                context_parts.append(f"[코드 셀 {cell['index'] + 1}]")
+                context_parts.append(f"```python\n{cell['source']}\n```")
+                
+                # 실행 결과가 있다면 포함
+                if cell['execution_count'] is not None:
+                    context_parts.append(f"실행 횟수: {cell['execution_count']}")
+                
+                if cell['outputs']:
+                    context_parts.append("출력:")
+                    for output in cell['outputs']:
+                        if output['type'] == 'result':
+                            context_parts.append(f"  결과: {output['data']}")
+                        elif output['type'] == 'stream':
+                            context_parts.append(f"  {output['name']}: {output['text']}")
+                        elif output['type'] == 'error':
+                            context_parts.append(f"  오류 ({output['ename']}): {output['evalue']}")
+                            if output['traceback']:
+                                context_parts.append(f"  트레이스백: {' '.join(output['traceback'][:3])}")
+                
+            elif cell['cell_type'] == 'markdown':
+                context_parts.append(f"[마크다운 셀 {cell['index'] + 1}]")
+                context_parts.append(cell['source'])
+            
+            context_parts.append("")  # 셀 간 구분을 위한 빈 줄
+        
+        return "\n".join(context_parts)
+    
+    async def analyze_notebook_cells(self, notebook_content: str, user_message: str, 
+                                   cell_indices: List[int] = None, provider: str = None) -> Dict[str, Any]:
+        """특정 셀들을 분석하고 수정 제안 제공"""
+        if provider is None:
+            provider = settings.default_llm_provider
+        
+        # 연결 상태 확인
+        connection_status = await self.check_connection(provider)
+        
+        if provider == "azure" and not connection_status["azure"]:
+            return {"error": "Azure OpenAI에 연결할 수 없습니다"}
+        elif provider == "ollama" and not connection_status["ollama"]:
+            return {"error": "Ollama에 연결할 수 없습니다"}
+        
+        # 노트북 내용 파싱
+        parsed_notebook = self.parse_notebook_content(notebook_content)
+        
+        if 'error' in parsed_notebook:
+            return {"error": f"노트북 파싱 실패: {parsed_notebook['error']}"}
+        
+        # 컨텍스트 추출
+        if cell_indices:
+            context = self.extract_cell_context(parsed_notebook, cell_indices)
+            context_description = f"선택된 {len(cell_indices)}개 셀"
+        else:
+            context = self.extract_cell_context(parsed_notebook)
+            context_description = f"전체 노트북 ({parsed_notebook['total_cells']}개 셀)"
+        
+        # 시스템 메시지 구성
+        system_message = """당신은 Jupyter 노트북 분석 및 코드 개선 전문가입니다.
+제공된 노트북 셀들을 분석하고 다음과 같은 도움을 제공하세요:
+
+1. **코드 분석**: 오류, 성능 이슈, 개선점 분석
+2. **코드 최적화**: 더 효율적이고 읽기 쉬운 코드 제안
+3. **버그 수정**: 발견된 오류에 대한 구체적인 수정 방안
+4. **기능 확장**: 추가할 수 있는 유용한 기능 제안
+5. **베스트 프랙티스**: Python/데이터 분석 모범 사례 적용
+
+응답은 한국어로 제공하고, 구체적이고 실행 가능한 코드 예시를 포함해주세요.
+코드 블록은 ```python으로 감싸서 명확하게 표시해주세요."""
+        
+        # 사용자 메시지 구성
+        user_prompt = f"""
+분석 대상: {context_description}
+
+노트북 내용:
+{context}
+
+사용자 요청: {user_message}
+
+위의 노트북 내용을 분석하고 사용자의 요청에 답변해주세요.
+"""
+        
+        try:
+            if provider == "azure":
+                result = await self._call_azure_api(system_message, user_prompt)
+            elif provider == "ollama":
+                result = await self._call_ollama_api(system_message, user_prompt)
+            else:
+                return {"error": f"지원하지 않는 LLM 제공자: {provider}"}
+            
+            # 분석 결과에 추가 정보 포함
+            result['analysis_info'] = {
+                'total_cells_analyzed': len(cell_indices) if cell_indices else parsed_notebook['total_cells'],
+                'cell_indices': cell_indices,
+                'notebook_summary': {
+                    'total_cells': parsed_notebook['total_cells'],
+                    'code_cells': parsed_notebook['code_cells_count'],
+                    'markdown_cells': parsed_notebook['markdown_cells_count']
+                }
+            }
+            
+            return result
+        
+        except Exception as e:
+            logger.error(f"LLM API 호출 실패: {e}")
+            return {"error": f"LLM API 호출 실패: {str(e)}"}
+
+    async def check_connection(self, provider: str = None) -> Dict[str, bool]:
+        """LLM 연결 상태 확인"""
+        status = {
+            "azure": False,
+            "ollama": False
+        }
+        
+        # Azure OpenAI 연결 확인
+        if self.azure_available and (provider is None or provider == "azure"):
+            try:
+                status["azure"] = await self._check_azure_connection()
+            except Exception as e:
+                logger.error(f"Azure 연결 확인 실패: {e}")
+        
+        # Ollama 연결 확인
+        if self.ollama_available and (provider is None or provider == "ollama"):
+            try:
+                status["ollama"] = await self._check_ollama_connection()
+            except Exception as e:
+                logger.error(f"Ollama 연결 확인 실패: {e}")
+        
+        return status
+    
+    async def _check_azure_connection(self) -> bool:
+        """Azure OpenAI 연결 확인"""
+        try:
+            headers = {
+                "Content-Type": "application/json",
+                "api-key": settings.azure_openai_api_key
+            }
+            
+            url = f"{settings.azure_openai_endpoint}/openai/deployments/{settings.azure_openai_deployment_name}/chat/completions?api-version={settings.azure_openai_api_version}"
+            
+            payload = {
+                "messages": [{"role": "user", "content": "test"}],
+                "max_tokens": 1,
+                "temperature": 0
+            }
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, headers=headers, json=payload, timeout=10) as response:
+                    return response.status in [200, 400]  # 400도 연결은 성공
+        except Exception as e:
+            logger.error(f"Azure 연결 확인 오류: {e}")
+            return False
+    
+    async def _check_ollama_connection(self) -> bool:
+        """Ollama 연결 확인"""
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f"{settings.ollama_base_url}/api/tags", timeout=5) as response:
+                    return response.status == 200
+        except Exception as e:
+            logger.error(f"Ollama 연결 확인 오류: {e}")
+            return False
+    
+    async def analyze_notebook(self, notebook_content: str, user_message: str, provider: str = None) -> Dict[str, Any]:
+        """노트북 내용 분석 및 수정 제안 (기존 호환성을 위한 메서드)"""
+        return await self.analyze_notebook_cells(notebook_content, user_message, None, provider)
+    
+    async def _call_azure_api(self, system_message: str, user_message: str) -> Dict[str, Any]:
+        """Azure OpenAI API 호출"""
+        headers = {
+            "Content-Type": "application/json",
+            "api-key": settings.azure_openai_api_key
+        }
+        
+        url = f"{settings.azure_openai_endpoint}/openai/deployments/{settings.azure_openai_deployment_name}/chat/completions?api-version={settings.azure_openai_api_version}"
         
         payload = {
-            "model": model_name,
-            "messages": ollama_messages,
-            "stream": stream,
+            "messages": [
+                {"role": "system", "content": system_message},
+                {"role": "user", "content": user_message}
+            ],
+            "max_tokens": settings.max_tokens,
+            "temperature": settings.temperature
+        }
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, headers=headers, json=payload, timeout=60) as response:
+                if response.status == 200:
+                    result = await response.json()
+                    return {
+                        "response": result["choices"][0]["message"]["content"],
+                        "provider": "azure",
+                        "model": settings.azure_openai_deployment_name
+                    }
+                else:
+                    error_text = await response.text()
+                    raise Exception(f"Azure API 오류 ({response.status}): {error_text}")
+    
+    async def _call_ollama_api(self, system_message: str, user_message: str) -> Dict[str, Any]:
+        """Ollama API 호출"""
+        payload = {
+            "model": settings.ollama_default_model,
+            "prompt": f"System: {system_message}\n\nUser: {user_message}\n\nAssistant:",
+            "stream": False,
             "options": {
                 "temperature": settings.temperature,
                 "num_predict": settings.max_tokens
             }
         }
         
-        try:
-            if stream:
-                return self._ollama_stream_completion(payload)
-            else:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(f"{settings.ollama_base_url}/api/generate", 
+                                  json=payload, timeout=120) as response:
+                if response.status == 200:
+                    result = await response.json()
+                    return {
+                        "response": result["response"],
+                        "provider": "ollama",
+                        "model": settings.ollama_default_model
+                    }
+                else:
+                    error_text = await response.text()
+                    raise Exception(f"Ollama API 오류 ({response.status}): {error_text}")
+    
+    async def get_available_models(self) -> Dict[str, List[str]]:
+        """사용 가능한 모델 목록 조회"""
+        models = {
+            "azure": [],
+            "ollama": []
+        }
+        
+        # Azure 모델 (설정에서 가져옴)
+        if self.azure_available:
+            models["azure"].append(settings.azure_openai_deployment_name)
+        
+        # Ollama 모델 목록 조회
+        if self.ollama_available:
+            try:
                 async with aiohttp.ClientSession() as session:
-                    async with session.post(
-                        f"{settings.ollama_base_url}/api/chat",
-                        json=payload
-                    ) as response:
+                    async with session.get(f"{settings.ollama_base_url}/api/tags", timeout=10) as response:
                         if response.status == 200:
-                            data = await response.json()
-                            return LLMResponse(
-                                content=data["message"]["content"],
-                                provider=LLMProvider.OLLAMA,
-                                model=model_name
-                            )
-                        else:
-                            raise Exception(f"Ollama API 오류: {response.status}")
-        except Exception as e:
-            logger.error(f"Ollama API 호출 실패: {e}")
-            raise
-    
-    async def _ollama_stream_completion(self, payload: dict) -> AsyncGenerator[str, None]:
-        """Ollama 스트리밍 완성"""
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    f"{settings.ollama_base_url}/api/chat",
-                    json=payload
-                ) as response:
-                    if response.status == 200:
-                        async for line in response.content:
-                            if line:
-                                try:
-                                    data = json.loads(line.decode('utf-8'))
-                                    if "message" in data and "content" in data["message"]:
-                                        content = data["message"]["content"]
-                                        if content:
-                                            yield content
-                                except json.JSONDecodeError:
-                                    continue
-                    else:
-                        raise Exception(f"Ollama 스트림 API 오류: {response.status}")
-        except Exception as e:
-            logger.error(f"Ollama 스트림 완성 실패: {e}")
-            raise
-    
-    async def analyze_code(
-        self, 
-        code: str, 
-        file_type: str = "python",
-        provider: LLMProvider = None,
-        model: str = None
-    ) -> LLMResponse:
-        """코드 분석"""
-        provider = provider or LLMProvider(settings.default_llm_provider)
+                            result = await response.json()
+                            models["ollama"] = [model["name"] for model in result.get("models", [])]
+            except Exception as e:
+                logger.error(f"Ollama 모델 목록 조회 실패: {e}")
         
-        system_prompt = """
-        당신은 전문적인 코드 분석가입니다. 주어진 코드를 분석하고 다음 정보를 제공하세요:
-        1. 코드의 주요 기능
-        2. 잠재적인 문제점이나 개선사항
-        3. 최적화 제안
-        4. 보안상 고려사항 (있다면)
-        
-        한국어로 명확하고 구체적으로 설명해주세요.
-        """
-        
-        user_prompt = f"""
-        다음 {file_type} 코드를 분석해주세요:
-
-        ```{file_type}
-        {code}
-        ```
-        """
-        
-        messages = [
-            ChatMessage(role="system", content=system_prompt),
-            ChatMessage(role="user", content=user_prompt)
-        ]
-        
-        return await self.chat_completion(messages, provider, model)
-    
-    async def suggest_code_improvement(
-        self, 
-        code: str, 
-        issue_description: str = "",
-        file_type: str = "python",
-        provider: LLMProvider = None,
-        model: str = None
-    ) -> LLMResponse:
-        """코드 개선 제안"""
-        provider = provider or LLMProvider(settings.default_llm_provider)
-        
-        system_prompt = """
-        당신은 숙련된 소프트웨어 개발자입니다. 주어진 코드를 개선하는 제안을 해주세요.
-        개선된 코드와 함께 변경 이유를 명확히 설명해주세요.
-        """
-        
-        issue_part = f"\n특히 다음 문제를 해결해주세요: {issue_description}" if issue_description else ""
-        
-        user_prompt = f"""
-        다음 {file_type} 코드를 개선해주세요:{issue_part}
-
-        ```{file_type}
-        {code}
-        ```
-        
-        개선된 코드와 변경 이유를 제공해주세요.
-        """
-        
-        messages = [
-            ChatMessage(role="system", content=system_prompt),
-            ChatMessage(role="user", content=user_prompt)
-        ]
-        
-        return await self.chat_completion(messages, provider, model)
+        return models
 
 # 전역 LLM 서비스 인스턴스
 llm_service = LLMService() 

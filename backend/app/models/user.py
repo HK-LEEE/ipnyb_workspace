@@ -4,6 +4,7 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.mysql import CHAR
 import uuid
 from ..database import Base
+from .tables import user_permissions, user_features, role_permissions, role_features, group_permissions, group_features
 
 def generate_user_id():
     """사용자 고유 ID 생성 (UUID 기반)"""
@@ -25,9 +26,13 @@ class User(Base):
     hashed_password = Column(String(255), nullable=False)
     
     # 계정 상태
-    is_active = Column(Boolean, default=True)
+    is_active = Column(Boolean, default=True, comment="계정 활성화 상태")
     is_admin = Column(Boolean, default=False)
     is_verified = Column(Boolean, default=False, comment="이메일 인증 여부")
+    approval_status = Column(String(20), default='pending', comment="승인 상태: pending, approved, rejected")
+    approval_note = Column(Text, nullable=True, comment="승인/거부 사유")
+    approved_by = Column(CHAR(36), ForeignKey('users.id'), nullable=True, comment="승인한 관리자")
+    approved_at = Column(DateTime, nullable=True, comment="승인 일시")
     
     # 역할 및 그룹 (직접 참조로 변경)
     role_id = Column(Integer, ForeignKey('roles.id'), nullable=True, comment="사용자 역할 ID")
@@ -48,6 +53,14 @@ class User(Base):
     workspaces = relationship("Workspace", back_populates="owner")
     role = relationship("Role", foreign_keys=[role_id], back_populates="users")
     group = relationship("Group", foreign_keys=[group_id], back_populates="members")
+    approver = relationship("User", foreign_keys=[approved_by], remote_side=[id])
+    
+    # 권한 및 기능 관계
+    permissions = relationship("Permission", secondary=user_permissions, back_populates="users")
+    features = relationship("Feature", secondary=user_features, back_populates="users")
+    
+    # 서비스 관련 관계 추가 - 임시로 비활성화
+    # services = relationship("Service", secondary="user_services", back_populates="users")
 
 class Group(Base):
     __tablename__ = "groups"
@@ -62,6 +75,10 @@ class Group(Base):
     # 관계 정의 (1:N 관계로 변경)
     members = relationship("User", foreign_keys='User.group_id', back_populates="group")
     creator = relationship("User", foreign_keys=[created_by])
+    
+    # 권한 및 기능 관계
+    permissions = relationship("Permission", secondary=group_permissions, back_populates="groups")
+    features = relationship("Feature", secondary=group_features, back_populates="groups")
 
 class Role(Base):
     __tablename__ = "roles"
@@ -69,9 +86,15 @@ class Role(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(50), unique=True, nullable=False)
     description = Column(Text, nullable=True)
-    permissions = Column(Text, nullable=True)  # JSON 형태로 권한 저장
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=func.now())
     
     # 관계 정의 (1:N 관계로 변경)
-    users = relationship("User", foreign_keys='User.role_id', back_populates="role") 
+    users = relationship("User", foreign_keys='User.role_id', back_populates="role")
+    
+    # 권한 및 기능 관계
+    permissions = relationship("Permission", secondary=role_permissions, back_populates="roles")
+    features = relationship("Feature", secondary=role_features, back_populates="roles")
+    
+    # 서비스 관련 관계 추가 - 임시로 비활성화
+    # services = relationship("Service", secondary="role_services", back_populates="roles") 

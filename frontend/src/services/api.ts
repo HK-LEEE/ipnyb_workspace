@@ -19,11 +19,10 @@ api.interceptors.request.use((config) => {
 // 인증 API
 export const authAPI = {
   login: async (username: string, password: string) => {
-    const formData = new FormData()
-    formData.append('username', username)
-    formData.append('password', password)
-    
-    const response = await api.post('/auth/token', formData)
+    const response = await api.post('/auth/login', {
+      email: username,
+      password: password,
+    })
     return response.data
   },
 

@@ -15,6 +15,10 @@ logger = logging.getLogger(__name__)
 # 베이스 클래스 생성
 Base = declarative_base()
 
+def get_database_url():
+    """현재 설정된 데이터베이스 URL 반환"""
+    return settings.database_url
+
 def get_database_engine():
     """데이터베이스 타입에 따라 적절한 엔진 생성"""
     database_url = settings.database_url
@@ -114,12 +118,16 @@ def get_db():
         yield db
     except Exception as e:
         logger.error(f"데이터베이스 세션 생성 실패: {str(e)}")
+        # 더 상세한 에러 정보 출력
+        import traceback
+        logger.error(f"세부 에러: {traceback.format_exc()}")
         raise
     finally:
         try:
             if db:
                 db.close()
-        except:
+        except Exception as e:
+            logger.error(f"데이터베이스 세션 종료 실패: {str(e)}")
             pass
 
 def create_tables():
@@ -134,13 +142,14 @@ def create_tables():
 def test_connection():
     """데이터베이스 연결 테스트"""
     try:
+        from sqlalchemy import text
         with engine.connect() as connection:
             if settings.database_type.lower() == "mysql":
-                result = connection.execute("SELECT 1").fetchone()
+                result = connection.execute(text("SELECT 1")).fetchone()
             elif settings.database_type.lower() == "mssql":
-                result = connection.execute("SELECT 1").fetchone()
+                result = connection.execute(text("SELECT 1")).fetchone()
             else:
-                result = connection.execute("SELECT 1").fetchone()
+                result = connection.execute(text("SELECT 1")).fetchone()
             return True
     except Exception as e:
         logger.error(f"연결 테스트 실패: {e}")

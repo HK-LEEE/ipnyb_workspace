@@ -47,6 +47,26 @@ class Settings(BaseSettings):
     max_tokens: int = int(os.getenv("MAX_TOKENS", "4000"))
     temperature: float = float(os.getenv("TEMPERATURE", "0.1"))
     
+    # Jupyter AI 설정
+    ai_default_provider: str = os.getenv("AI_DEFAULT_PROVIDER", "gpt4all")
+    ai_default_model: str = os.getenv("AI_DEFAULT_MODEL", "gpt4all:orca-mini-3b-gguf2-q4_0")
+    
+    # AI API 키들
+    openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
+    anthropic_api_key: str = os.getenv("ANTHROPIC_API_KEY", "")
+    google_api_key: str = os.getenv("GOOGLE_API_KEY", "")
+    
+    # AI 모델 목록 (쉼표로 구분)
+    ai_openai_models: str = os.getenv("AI_OPENAI_MODELS", "gpt-3.5-turbo,gpt-4")
+    ai_anthropic_models: str = os.getenv("AI_ANTHROPIC_MODELS", "claude-3-sonnet,claude-3-haiku")
+    ai_google_models: str = os.getenv("AI_GOOGLE_MODELS", "gemini-pro")
+    
+    # AI 사용 제한
+    ai_max_tokens: int = int(os.getenv("AI_MAX_TOKENS", "1000"))
+    ai_temperature: float = float(os.getenv("AI_TEMPERATURE", "0.7"))
+    ai_max_chat_history: int = int(os.getenv("AI_MAX_CHAT_HISTORY", "10"))
+    ai_enabled_features: str = os.getenv("AI_ENABLED_FEATURES", "chat,completion,learn")
+    
     @property
     def database_url(self) -> str:
         """데이터베이스 타입에 따라 적절한 URL 반환"""

@@ -3,8 +3,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import os
 
-from .routers import auth
+from .routers import auth, workspace, jupyter, files, llm, service, admin
 from .database import create_tables
+# 모든 모델을 import하여 테이블 생성 시 인식되도록 함
+from .models import User, Group, Role, Workspace, Service, ServiceCategory, UserServicePermission, Permission, Feature
 
 # FastAPI 앱 생성
 app = FastAPI(
@@ -27,6 +29,12 @@ create_tables()
 
 # 라우터 추가
 app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])
+app.include_router(admin.router, tags=["Admin"])
+app.include_router(workspace.router, prefix="/api", tags=["Workspaces"])
+app.include_router(jupyter.router, prefix="/api/jupyter", tags=["Jupyter"])
+app.include_router(files.router, prefix="/api/files", tags=["Files"])
+app.include_router(llm.router, prefix="/api/llm", tags=["LLM"])
+app.include_router(service.router)
 
 # 정적 파일 서빙 (업로드된 파일용)
 if not os.path.exists("data"):
@@ -42,8 +50,15 @@ async def root():
         "status": "running"
     }
 
-@app.get("/api/health")
+@app.get("/health")
 async def health_check():
+    return {
+        "status": "healthy",
+        "message": "API가 정상적으로 작동 중입니다."
+    }
+
+@app.get("/api/health") 
+async def api_health_check():
     return {
         "status": "healthy",
         "message": "API가 정상적으로 작동 중입니다."

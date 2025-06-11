@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, EmailStr
+from typing import List
 from passlib.context import CryptContext
 from passlib.hash import bcrypt
 from jose import JWTError, jwt
@@ -13,7 +14,7 @@ from dotenv import load_dotenv
 from sqlalchemy.sql import func
 
 from ..database import get_db
-from ..models import User, Role, Group
+from ..models import User, Role, Group, Permission, Feature
 
 # 환경변수 로드
 load_dotenv()
@@ -66,6 +67,8 @@ class UserCreate(BaseModel):
     password: str
     department: str = None  # 부서 (선택사항)
     position: str = None  # 직책 (선택사항)
+    requested_permissions: List[int] = []  # 요청하는 권한 ID 목록
+    requested_features: List[int] = []  # 요청하는 기능 ID 목록
 
 class UserLogin(BaseModel):
     email: EmailStr
@@ -74,6 +77,10 @@ class UserLogin(BaseModel):
 class PasswordReset(BaseModel):
     email: EmailStr
     phone_last_digits: str
+
+class PasswordChange(BaseModel):
+    current_password: str
+    new_password: str
 
 class Token(BaseModel):
     access_token: str
@@ -163,6 +170,15 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
         raise credentials_exception
     return user
 
+def get_current_admin_user(current_user: User = Depends(get_current_user)):
+    """관리자 권한 확인"""
+    if not current_user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="관리자 권한이 필요합니다."
+        )
+    return current_user
+
 # 라우트들
 @router.post("/register", response_model=Token)
 async def register(user_data: UserCreate, db: Session = Depends(get_db)):
@@ -197,10 +213,11 @@ async def register(user_data: UserCreate, db: Session = Depends(get_db)):
         department=user_data.department,
         position=user_data.position,
         hashed_password=hashed_password,
-        is_active=True,
+        is_active=False,  # 승인 대기 상태로 변경
         is_admin=False,
         is_verified=False,
-        login_count=1
+        approval_status='pending',  # 승인 대기 상태
+        login_count=0  # 로그인 전이므로 0으로 설정
     )
     
     db.add(new_user)
@@ -215,6 +232,25 @@ async def register(user_data: UserCreate, db: Session = Depends(get_db)):
     default_group = db.query(Group).filter(Group.name == "Default Users").first()
     if default_group:
         new_user.group_id = default_group.id
+    
+    # 요청된 권한과 기능 할당 (승인 필요한 것들은 관리자가 나중에 승인)
+    if user_data.requested_permissions:
+        requested_permissions = db.query(Permission).filter(
+            Permission.id.in_(user_data.requested_permissions),
+            Permission.is_active == True
+        ).all()
+        # 기본 권한만 자동 부여, 나머지는 승인 대기
+        basic_permissions = [p for p in requested_permissions if p.category == 'basic']
+        new_user.permissions = basic_permissions
+    
+    if user_data.requested_features:
+        requested_features = db.query(Feature).filter(
+            Feature.id.in_(user_data.requested_features),
+            Feature.is_active == True
+        ).all()
+        # 승인이 필요하지 않은 기능만 자동 부여
+        auto_features = [f for f in requested_features if not f.requires_approval]
+        new_user.features = auto_features
     
     db.commit()
     db.refresh(new_user)  # 관계 데이터 로드
@@ -365,4 +401,24 @@ async def get_current_user_info(current_user: User = Depends(get_current_user), 
 @router.post("/logout")
 async def logout():
     """로그아웃 (클라이언트에서 토큰 삭제)"""
-    return {"message": "로그아웃되었습니다."} 
+    return {"message": "로그아웃되었습니다."}
+
+@router.post("/change-password")
+async def change_password(
+    password_data: PasswordChange, 
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """사용자 본인 비밀번호 변경"""
+    # 현재 비밀번호 확인
+    if not verify_password(password_data.current_password, current_user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="현재 비밀번호가 올바르지 않습니다."
+        )
+    
+    # 새 비밀번호 해시화 및 저장
+    current_user.hashed_password = hash_password(password_data.new_password)
+    db.commit()
+    
+    return {"message": "비밀번호가 성공적으로 변경되었습니다."} 

@@ -314,7 +314,79 @@ JupyterLab에서 "Error Starting Kernel" 오류가 발생하는 경우:
 
 문제가 발생하거나 기능 요청이 있으시면 GitHub Issues를 통해 문의해 주세요. 
 
+## 🤖 AI 노트북 도우미
 
+### 개요
+Jupyter 노트북 작업을 돕는 AI 채팅 기능이 포함되어 있습니다. Azure OpenAI 또는 로컬 Ollama를 통해 노트북 분석, 코드 개선, 오류 해결 등을 지원합니다.
 
-ㅊㅇ 
-admin123!"# ipnyb_workspace" 
+### 지원 기능
+- **노트북 분석**: 현재 노트북의 코드를 분석하고 개선점 제안
+- **오류 해결**: 코드 오류 진단 및 수정 방안 제시
+- **코드 최적화**: 성능 개선 및 모범 사례 제안
+- **데이터 분석 가이드**: 데이터 분석 워크플로우 개선 제안
+- **실시간 채팅**: 노트북 작업 중 실시간 AI 도움
+
+### LLM 제공자 설정
+
+#### Azure OpenAI 설정
+```bash
+# .env 파일에 추가
+AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
+AZURE_OPENAI_API_KEY=your-api-key
+AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4o
+AZURE_OPENAI_API_VERSION=2024-02-15-preview
+DEFAULT_LLM_PROVIDER=azure
+```
+
+#### Ollama 로컬 LLM 설정
+```bash
+# Ollama 설치 (Windows)
+winget install Ollama.Ollama
+
+# 모델 다운로드
+ollama pull llama3.2
+ollama pull codellama
+
+# .env 파일에 추가
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_DEFAULT_MODEL=llama3.2
+DEFAULT_LLM_PROVIDER=ollama
+```
+
+### 사용 방법
+
+1. **워크스페이스 시작**: Jupyter Lab이 실행 중인 워크스페이스에서 사용 가능
+2. **AI 도우미 열기**: "AI 노트북 도우미" 버튼 클릭
+3. **노트북 분석**: 현재 열린 노트북을 자동으로 분석
+4. **질문하기**: 코드, 오류, 개선 방안에 대해 자유롭게 질문
+5. **설정 변경**: 설정 버튼을 통해 LLM 제공자 변경 가능
+
+### 연결 상태 표시
+- **🟢 초록색 점**: LLM 서비스 연결 정상
+- **🔴 빨간색 점**: 연결 실패 (설정 확인 필요)
+- **⚙️ 설정 버튼**: LLM 제공자 선택 및 상태 확인
+
+### 문제 해결
+
+#### LLM 연결 실패 시
+1. **Azure OpenAI**: API 키, 엔드포인트, 배포 이름 확인
+2. **Ollama**: 서비스 실행 상태 및 모델 설치 확인
+3. **네트워크**: 방화벽 및 프록시 설정 확인
+
+#### Ollama 서비스 시작
+```bash
+# Windows 서비스 시작
+ollama serve
+
+# 모델 상태 확인
+ollama list
+```
+
+### API 엔드포인트
+- `GET /api/llm/status` - LLM 서비스 상태 확인
+- `POST /api/llm/chat` - 노트북과 함께 채팅
+- `GET /api/llm/models` - 사용 가능한 모델 목록
+- `GET /api/llm/workspace/{id}/notebooks` - 워크스페이스 노트북 목록
+
+echo   👑 Admin: admin@jupyter-platform.com / admin123!
+echo   👤 Test User: test@example.com / test123!

@@ -1,0 +1,47 @@
+from sqlalchemy import Column, Integer, String, ForeignKey, Table
+from sqlalchemy.dialects.mysql import CHAR
+from ..database import Base
+
+# Many-to-many association tables for user permissions and features
+user_permissions = Table(
+    'user_permissions', 
+    Base.metadata,
+    Column('user_id', CHAR(36), ForeignKey('users.id'), primary_key=True),
+    Column('permission_id', Integer, ForeignKey('permissions.id'), primary_key=True)
+)
+
+user_features = Table(
+    'user_features', 
+    Base.metadata,
+    Column('user_id', CHAR(36), ForeignKey('users.id'), primary_key=True),
+    Column('feature_id', Integer, ForeignKey('features.id'), primary_key=True)
+)
+
+role_permissions = Table(
+    'role_permissions',
+    Base.metadata,
+    Column('role_id', Integer, ForeignKey('roles.id'), primary_key=True),
+    Column('permission_id', Integer, ForeignKey('permissions.id'), primary_key=True)
+)
+
+role_features = Table(
+    'role_features',
+    Base.metadata,
+    Column('role_id', Integer, ForeignKey('roles.id'), primary_key=True), 
+    Column('feature_id', Integer, ForeignKey('features.id'), primary_key=True)
+)
+
+# Group permissions and features association tables
+group_permissions = Table(
+    'group_permissions',
+    Base.metadata,
+    Column('group_id', Integer, ForeignKey('groups.id'), primary_key=True),
+    Column('permission_id', Integer, ForeignKey('permissions.id'), primary_key=True)
+)
+
+group_features = Table(
+    'group_features',
+    Base.metadata,
+    Column('group_id', Integer, ForeignKey('groups.id'), primary_key=True),
+    Column('feature_id', Integer, ForeignKey('features.id'), primary_key=True)
+) 

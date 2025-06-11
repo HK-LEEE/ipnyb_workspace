@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # 라우터 import
-from app.routers import auth, workspace, jupyter, files, llm
+from app.routers import auth, workspace, jupyter, files, llm, service, admin
 from app.database import get_db
 from app.models import User
 
@@ -28,14 +28,9 @@ app = FastAPI(
 # CORS 설정 - 개발 및 배포 환경 모두 지원
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000", 
-        "http://127.0.0.1:3000",
-        "http://localhost:3001",
-        "http://127.0.0.1:3001"
-    ],
+    allow_origins=["*"],  # 모든 도메인 허용
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allow_headers=["*"],
 )
 
@@ -45,6 +40,8 @@ app.include_router(workspace.router, prefix="/api", tags=["workspaces"])
 app.include_router(jupyter.router, prefix="/api", tags=["jupyter"])
 app.include_router(files.router, prefix="/api", tags=["files"])
 app.include_router(llm.router, prefix="/api", tags=["llm"])
+app.include_router(service.router)
+app.include_router(admin.router)
 
 # 기본 라우트
 @app.get("/")

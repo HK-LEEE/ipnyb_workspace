@@ -1,6 +1,11 @@
 import React, { useState, useEffect } from 'react'
 import { BrowserRouter as Router, Routes, Route, useNavigate, useParams } from 'react-router-dom'
 import './App.css'
+import MainPage from './pages/MotherPage'
+import AdminPage from './pages/AdminPage'
+import LoginPage from './pages/LoginPage'
+import ResetPasswordPage from './pages/ResetPasswordPage'
+import RegisterPage from './pages/RegisterPage'
 
 // 타입 정의
 interface Workspace {
@@ -74,9 +79,9 @@ const HomePage = () => {
       if (response.ok) {
         localStorage.setItem('token', data.access_token)
         localStorage.setItem('user', JSON.stringify(data.user))
-        setMessage('로그인 성공! 대시보드로 이동합니다.')
+        setMessage('로그인 성공! Main 페이지로 이동합니다.')
         setTimeout(() => {
-          navigate('/dashboard')
+          navigate('/main')
         }, 1000)
       } else {
         setError(data.detail || '로그인에 실패했습니다.')
@@ -131,9 +136,9 @@ const HomePage = () => {
       if (response.ok) {
         localStorage.setItem('token', data.access_token)
         localStorage.setItem('user', JSON.stringify(data.user))
-        setMessage('회원가입 성공! 대시보드로 이동합니다.')
+        setMessage('회원가입 성공! Main 페이지로 이동합니다.')
         setTimeout(() => {
-          navigate('/dashboard')
+          navigate('/main')
         }, 1000)
       } else {
         setError(data.detail || '회원가입에 실패했습니다.')
@@ -1218,14 +1223,67 @@ const DashboardPage = () => {
   )
 }
 
+// 워크스페이스 목록 페이지 컴포넌트 추가
+const WorkspacesPage = () => {
+  return <DashboardPage />;
+};
+
+// 인증 체크 컴포넌트
+const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
+  const navigate = useNavigate()
+  const [isChecking, setIsChecking] = useState(true)
+
+  useEffect(() => {
+    const token = localStorage.getItem('token')
+    if (!token) {
+      navigate('/')
+    } else {
+      // 토큰 유효성 검사 (선택사항)
+      setIsChecking(false)
+    }
+  }, [navigate])
+
+  if (isChecking) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+      </div>
+    )
+  }
+
+  return <>{children}</>
+}
+
+// 루트 리다이렉트 컴포넌트
+const RootRedirect = () => {
+  const navigate = useNavigate()
+
+  useEffect(() => {
+    const token = localStorage.getItem('token')
+    if (token) {
+      navigate('/main')
+    }
+    // 토큰이 없으면 현재 페이지(HomePage)가 표시됨
+  }, [navigate])
+
+  return <HomePage />
+}
+
 function App() {
   return (
     <Router>
       <div className="App">
         <Routes>
-          <Route path="/" element={<HomePage />} />
-          <Route path="/dashboard" element={<DashboardPage />} />
-          <Route path="/files/:workspaceId" element={<FileManagerPage />} />
+          <Route path="/" element={<LoginPage />} />
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/register" element={<RegisterPage />} />
+          <Route path="/reset-password" element={<ResetPasswordPage />} />
+  
+          <Route path="/main" element={<ProtectedRoute><MainPage /></ProtectedRoute>} />
+          <Route path="/dashboard" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
+          <Route path="/workspaces" element={<ProtectedRoute><WorkspacesPage /></ProtectedRoute>} />
+          <Route path="/admin" element={<ProtectedRoute><AdminPage /></ProtectedRoute>} />
+          <Route path="/files/:workspaceId" element={<ProtectedRoute><FileManagerPage /></ProtectedRoute>} />
         </Routes>
       </div>
     </Router>

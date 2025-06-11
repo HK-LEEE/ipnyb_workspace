@@ -10,6 +10,11 @@ from .auth import get_current_user
 
 router = APIRouter(prefix="/workspaces", tags=["Workspaces"])
 
+@router.get("/health")
+async def workspace_health():
+    """워크스페이스 라우터 상태 확인"""
+    return {"status": "ok", "message": "Workspace router is working"}
+
 @router.post("/", response_model=WorkspaceResponse)
 async def create_workspace(
     workspace_data: WorkspaceCreate,

@@ -3,11 +3,15 @@ import signal
 import os
 import sys
 import psutil
+import json
 from typing import Dict, Optional
 from ..models.workspace import Workspace
-from ..utils.workspace import find_available_port, generate_jupyter_token, ensure_jupyter_kernel
+from ..utils.workspace import find_available_port, generate_jupyter_token
 from ..config import settings
 from pathlib import Path
+import logging
+
+logger = logging.getLogger(__name__)
 
 class JupyterService:
     def __init__(self):
@@ -16,6 +20,119 @@ class JupyterService:
     def _get_python_command(self):
         """현재 Python 실행 파일 경로 반환"""
         return sys.executable
+    
+    def _create_jupyter_ai_config(self, workspace_path: str, workspace_id: int) -> str:
+        """사용자별 Jupyter AI 설정 파일 생성"""
+        jupyter_config_dir = Path(workspace_path) / ".jupyter"
+        jupyter_config_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 사용 가능한 프로바이더 목록 생성
+        allowed_providers = []
+        model_parameters = {}
+        
+        # GPT4All (API 키 불필요 - 로컬 모델)
+        allowed_providers.append("gpt4all")
+        
+        # OpenAI (API 키가 있는 경우만)
+        if settings.openai_api_key and settings.openai_api_key != "your-openai-api-key-here":
+            allowed_providers.append("openai")
+            allowed_providers.append("openai-chat")
+            # OpenAI 모델별 설정
+            for model in settings.ai_openai_models.split(","):
+                model = model.strip()
+                if model:
+                    model_parameters[f"openai-chat:{model}"] = {
+                        "temperature": settings.ai_temperature,
+                        "max_tokens": settings.ai_max_tokens
+                    }
+        
+        # Anthropic (API 키가 있는 경우만)
+        if settings.anthropic_api_key and settings.anthropic_api_key != "your-anthropic-api-key-here":
+            allowed_providers.append("anthropic")
+            allowed_providers.append("anthropic-chat")
+            # Anthropic 모델별 설정
+            for model in settings.ai_anthropic_models.split(","):
+                model = model.strip()
+                if model:
+                    model_parameters[f"anthropic-chat:{model}"] = {
+                        "temperature": settings.ai_temperature,
+                        "max_tokens": settings.ai_max_tokens
+                    }
+        
+        # Google Gemini (API 키가 있는 경우만)
+        if settings.google_api_key and settings.google_api_key != "your-google-api-key-here":
+            allowed_providers.append("gemini")
+            # Gemini 모델별 설정
+            for model in settings.ai_google_models.split(","):
+                model = model.strip()
+                if model:
+                    model_parameters[f"gemini:{model}"] = {
+                        "temperature": settings.ai_temperature,
+                        "max_tokens": settings.ai_max_tokens
+                    }
+        
+        # Ollama (로컬 설치되어 있는 경우)
+        try:
+            import requests
+            ollama_response = requests.get(f"{settings.ollama_base_url}/api/tags", timeout=2)
+            if ollama_response.status_code == 200:
+                allowed_providers.append("ollama")
+                model_parameters[f"ollama:{settings.ollama_default_model}"] = {
+                    "temperature": settings.ai_temperature,
+                    "max_tokens": settings.ai_max_tokens
+                }
+        except Exception:
+            pass  # Ollama가 설치되지 않은 경우 무시
+        
+        # Jupyter AI 설정 생성
+        ai_config = {
+            "AiExtension": {
+                "default_language_model": settings.ai_default_model,
+                "allowed_providers": allowed_providers,
+                "default_max_chat_history": settings.ai_max_chat_history,
+                "model_parameters": model_parameters,
+                # API 키는 환경변수에서 자동으로 로드됨
+            }
+        }
+        
+        # 설정 파일 저장
+        config_file = jupyter_config_dir / "jupyter_jupyter_ai_config.json"
+        with open(config_file, 'w', encoding='utf-8') as f:
+            json.dump(ai_config, f, indent=2, ensure_ascii=False)
+        
+        logger.info(f"Jupyter AI 설정 파일 생성: {config_file}")
+        logger.info(f"사용 가능한 프로바이더: {allowed_providers}")
+        
+        return str(config_file)
+    
+    def _ensure_jupyter_ai_installed(self, python_exe: str) -> bool:
+        """Jupyter AI가 설치되어 있는지 확인하고 필요시 설치"""
+        try:
+            # Jupyter AI 설치 확인
+            result = subprocess.run([
+                python_exe, "-c", "import jupyter_ai; print('Jupyter AI 설치됨')"
+            ], capture_output=True, text=True, timeout=30)
+            
+            if result.returncode == 0:
+                logger.info("Jupyter AI가 이미 설치되어 있습니다.")
+                return True
+            
+            # 설치되지 않은 경우 설치 시도
+            logger.info("Jupyter AI 설치 중...")
+            install_result = subprocess.run([
+                python_exe, "-m", "pip", "install", "jupyter-ai[all]", "--quiet"
+            ], capture_output=True, text=True, timeout=300)
+            
+            if install_result.returncode == 0:
+                logger.info("Jupyter AI 설치 완료")
+                return True
+            else:
+                logger.error(f"Jupyter AI 설치 실패: {install_result.stderr}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Jupyter AI 설치 확인 중 오류: {e}")
+            return False
     
     def start_jupyter_lab(self, workspace: Workspace, db_session=None) -> tuple[int, str]:
         """Jupyter Lab 인스턴스 시작"""
@@ -39,9 +156,9 @@ class JupyterService:
         if workspace.jupyter_port:
             print(f"기존 포트 {workspace.jupyter_port} 상태 확인 중...")
             import socket
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            result = sock.connect_ex(('localhost', workspace.jupyter_port))
-            sock.close()
+            test_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            result = test_sock.connect_ex(('localhost', workspace.jupyter_port))
+            test_sock.close()
             
             if result == 0:
                 print(f"포트 {workspace.jupyter_port}가 여전히 사용 중 - 새 포트 할당")
@@ -64,16 +181,29 @@ class JupyterService:
             os.makedirs(workspace.path, exist_ok=True)
             print(f"워크스페이스 디렉토리 생성: {workspace.path}")
         
-        # 커널 설정 확인
-        print("Jupyter 커널 설정 확인 중...")
-        kernel_ready = ensure_jupyter_kernel(workspace.path)
-        if not kernel_ready:
-            print("경고: 커널 설정에 문제가 있을 수 있습니다. 계속 진행합니다.")
-        
         # Python 실행 파일 경로
         python_exe = self._get_python_command()
         
-        # Jupyter Lab 명령어 구성
+        # 커널 설정 확인 및 설치
+        print("Jupyter 커널 설정 확인 중...")
+        kernel_ready = self._ensure_python_kernel(workspace.id, python_exe)
+        if not kernel_ready:
+            print("경고: 커널 설정에 문제가 있을 수 있습니다. 계속 진행합니다.")
+        
+        # Jupyter AI 설정
+        print("Jupyter AI 설정 중...")
+        ai_installed = self._ensure_jupyter_ai_installed(python_exe)
+        ai_config_file = None
+        if ai_installed:
+            try:
+                ai_config_file = self._create_jupyter_ai_config(workspace.path, workspace.id)
+                print(f"Jupyter AI 설정 완료: {ai_config_file}")
+            except Exception as e:
+                print(f"Jupyter AI 설정 실패: {e}")
+        else:
+            print("Jupyter AI 설치 실패 - AI 기능 없이 진행합니다.")
+        
+        # Jupyter Lab 명령어 구성 (단순화된 안정적인 설정)
         cmd = [
             python_exe, "-m", "jupyterlab",
             "--port", str(port),
@@ -86,23 +216,12 @@ class JupyterService:
             "--ServerApp.allow_origin='*'",
             "--ServerApp.allow_remote_access=True",
             "--ServerApp.port_retries=0",  # 포트 재시도 비활성화 (지정된 포트만 사용)
-            # 커널 관련 설정 추가
-            "--ServerApp.kernel_manager_class=jupyter_server.services.kernels.kernelmanager.MappingKernelManager",
-            "--ServerApp.session_manager_class=jupyter_server.services.sessions.sessionmanager.SessionManager",
             "--ServerApp.allow_credentials=True",
-            "--ServerApp.log_level=DEBUG",  # 디버그 로그 활성화
-            # 커널 시작 타임아웃 늘리기
+            "--ServerApp.log_level=INFO",  # 로그 레벨
+            # 커널 기본 설정만 유지
             "--MappingKernelManager.default_kernel_name=python3",
-            "--MappingKernelManager.kernel_info_timeout=60",
-            "--KernelManager.shutdown_wait_time=1.0",
-            # 세션 관리 설정
             "--ServerApp.terminals_enabled=True",
-            "--ServerApp.allow_root=True" if os.name != 'nt' else "",  # Windows가 아닌 경우만 
         ]
-        
-        # Windows에서는 allow_root 옵션 제거
-        if os.name == 'nt':
-            cmd = [arg for arg in cmd if arg != "--ServerApp.allow_root=True"]
         
         # 빈 문자열 제거
         cmd = [arg for arg in cmd if arg]
@@ -117,6 +236,26 @@ class JupyterService:
             env['JUPYTER_RUNTIME_DIR'] = os.path.join(workspace.path, '.jupyter', 'runtime')
             env['JUPYTER_DATA_DIR'] = os.path.join(workspace.path, '.jupyter', 'data')
             env['JUPYTER_CONFIG_DIR'] = os.path.join(workspace.path, '.jupyter', 'config')
+            
+            # Jupyter AI 환경변수 설정
+            if ai_config_file:
+                env['JUPYTER_CONFIG_PATH'] = os.path.dirname(ai_config_file)
+            
+            # AI API 키 환경변수 설정 (사용 가능한 경우만)
+            if settings.openai_api_key and settings.openai_api_key != "your-openai-api-key-here":
+                env['OPENAI_API_KEY'] = settings.openai_api_key
+                print("OpenAI API 키 설정됨")
+            
+            if settings.anthropic_api_key and settings.anthropic_api_key != "your-anthropic-api-key-here":
+                env['ANTHROPIC_API_KEY'] = settings.anthropic_api_key
+                print("Anthropic API 키 설정됨")
+            
+            if settings.google_api_key and settings.google_api_key != "your-google-api-key-here":
+                env['GOOGLE_API_KEY'] = settings.google_api_key
+                print("Google API 키 설정됨")
+            
+            # Ollama 설정
+            env['OLLAMA_BASE_URL'] = settings.ollama_base_url
             
             # 커널이 현재 Python 환경을 사용하도록 설정
             python_dir = os.path.dirname(python_exe)
@@ -188,17 +327,18 @@ class JupyterService:
             
             # 포트가 실제로 열렸는지 여러 번 확인
             port_ready = False
-            for attempt in range(15):  # 15번 시도로 증가
-                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                result = sock.connect_ex(('localhost', port))
-                sock.close()
+            for attempt in range(3):  # 15번 시도로 증가
+                import socket
+                test_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                result = test_sock.connect_ex(('localhost', port))
+                test_sock.close()
                 
                 if result == 0:
                     port_ready = True
                     print(f"포트 {port} 연결 확인됨 (시도 {attempt + 1})")
                     break
                 else:
-                    print(f"포트 {port} 연결 대기 중... (시도 {attempt + 1}/15)")
+                    print(f"포트 {port} 연결 대기 중... (시도 {attempt + 1}/3)")
                     time.sleep(3)  # 대기 시간 증가
             
             if not port_ready:
@@ -294,6 +434,68 @@ class JupyterService:
         
         for workspace_id in to_remove:
             del self.processes[workspace_id]
+
+    def _ensure_python_kernel(self, workspace_id: int, python_exe: str) -> bool:
+        """Python 커널이 사용 가능한지 확인하고 필요시 설치"""
+        try:
+            logger.info("커널스펙 확인 중...")
+            
+            # Python 실행 파일 확인
+            if not os.path.exists(python_exe):
+                logger.error(f"Python 실행 파일을 찾을 수 없음: {python_exe}")
+                return False
+                
+            logger.info(f"Python: {python_exe}")
+            
+            # 커널스펙 이름을 워크스페이스 ID 기반으로 생성
+            kernel_name = f"python3-{workspace_id}"
+            
+            try:
+                # 기존 커널스펙 제거 (오류가 있을 수 있는 것들)
+                subprocess.run([
+                    python_exe, "-m", "ipykernel", "uninstall", kernel_name, "-f"
+                ], capture_output=True, timeout=30)
+                
+                # 새 커널스펙 설치 (더 안정적인 설정으로)
+                logger.info(f"커널스펙 설치 중: {kernel_name}")
+                result = subprocess.run([
+                    python_exe, "-m", "ipykernel", "install",
+                    "--user",  # 사용자 디렉토리에 설치
+                    "--name", kernel_name,
+                    "--display-name", f"Python 3 (Workspace {workspace_id})"
+                ], capture_output=True, text=True, timeout=60)
+                
+                if result.returncode == 0:
+                    logger.info(f"커널스펙 설치 완료: {kernel_name}")
+                    return True
+                else:
+                    logger.error(f"커널스펙 설치 실패: {result.stderr}")
+                    
+                    # 기본 커널이라도 사용할 수 있는지 확인
+                    try:
+                        # 기본 python3 커널 설치 시도
+                        result = subprocess.run([
+                            python_exe, "-m", "ipykernel", "install", "--user"
+                        ], capture_output=True, text=True, timeout=60)
+                        
+                        if result.returncode == 0:
+                            logger.info("기본 python3 커널 설치 완료")
+                            return True
+                    except Exception as e:
+                        logger.error(f"기본 커널 설치도 실패: {e}")
+                    
+                    return False
+                    
+            except subprocess.TimeoutExpired:
+                logger.error("커널스펙 설치 타임아웃")
+                return False
+            except Exception as e:
+                logger.error(f"커널스펙 설치 중 오류: {e}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"커널 확인 중 오류: {e}")
+            return False
 
 # 전역 Jupyter 서비스 인스턴스
 jupyter_service = JupyterService() 
