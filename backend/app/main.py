@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import os
 
-from .routers import auth, workspace, jupyter, files, llm, service, admin
+from .routers import auth, workspace, jupyter, files, llm, service, admin, llmops
 from .database import create_tables
 # 모든 모델을 import하여 테이블 생성 시 인식되도록 함
 from .models import User, Group, Role, Workspace, Service, ServiceCategory, UserServicePermission, Permission, Feature
@@ -34,6 +34,7 @@ app.include_router(workspace.router, prefix="/api", tags=["Workspaces"])
 app.include_router(jupyter.router, prefix="/api/jupyter", tags=["Jupyter"])
 app.include_router(files.router, prefix="/api/files", tags=["Files"])
 app.include_router(llm.router, prefix="/api/llm", tags=["LLM"])
+app.include_router(llmops.router, prefix="/api", tags=["LLMOps"])
 app.include_router(service.router)
 
 # 정적 파일 서빙 (업로드된 파일용)

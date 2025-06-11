@@ -47,4 +47,10 @@ requests==2.31.0
 websockets==12.0
 
 # 템플릿 엔진
-jinja2==3.1.2 
+jinja2==3.1.2
+
+# Langflow LLMOps Platform
+langflow==1.0.12
+langflow-base==0.0.84
+langchain==0.1.20
+langflow-nightly==1.0.0a52 

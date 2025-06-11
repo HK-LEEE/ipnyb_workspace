@@ -6,6 +6,7 @@ import AdminPage from './pages/AdminPage'
 import LoginPage from './pages/LoginPage'
 import ResetPasswordPage from './pages/ResetPasswordPage'
 import RegisterPage from './pages/RegisterPage'
+import LLMOpsPage from './pages/LLMOpsPage'
 
 // 타입 정의
 interface Workspace {
@@ -1283,6 +1284,7 @@ function App() {
           <Route path="/dashboard" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
           <Route path="/workspaces" element={<ProtectedRoute><WorkspacesPage /></ProtectedRoute>} />
           <Route path="/admin" element={<ProtectedRoute><AdminPage /></ProtectedRoute>} />
+          <Route path="/llmops" element={<ProtectedRoute><LLMOpsPage /></ProtectedRoute>} />
           <Route path="/files/:workspaceId" element={<ProtectedRoute><FileManagerPage /></ProtectedRoute>} />
         </Routes>
       </div>
