@@ -1421,6 +1421,30 @@ async def update_group_features(
     
     return {"message": "그룹 기능이 업데이트되었습니다."}
 
+# Feature Categories 관리 API
+@router.get("/feature-categories")
+async def get_feature_categories(
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin_user)
+):
+    """기능 카테고리 목록 조회"""
+    from ..models.permission import FeatureCategory
+    categories = db.query(FeatureCategory).filter(FeatureCategory.is_active == True).order_by(FeatureCategory.sort_order).all()
+    
+    return [
+        {
+            "id": category.id,
+            "name": category.name,
+            "display_name": category.display_name,
+            "description": category.description,
+            "icon": category.icon,
+            "color": category.color,
+            "sort_order": category.sort_order,
+            "is_active": category.is_active
+        }
+        for category in categories
+    ]
+
 # 사용자 그룹 할당
 @router.post("/users/group")
 async def update_user_group(

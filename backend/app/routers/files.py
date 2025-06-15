@@ -19,50 +19,74 @@ async def list_files(
     db: Session = Depends(get_db)
 ):
     """워크스페이스 내 파일 목록 조회"""
+    print(f"=== 파일 목록 요청 ===")
+    print(f"워크스페이스 ID: {workspace_id}")
+    print(f"경로: '{path}'")
+    print(f"사용자 ID: {current_user.id}")
+    
     workspace_service = WorkspaceService(db)
     workspace = workspace_service.get_workspace_by_id(workspace_id, current_user.id)
     
     if not workspace:
+        print(f"워크스페이스를 찾을 수 없음: {workspace_id}")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Workspace not found"
         )
     
+    print(f"워크스페이스 찾음: {workspace.name}, path: {workspace.path}")
+    
     # 워크스페이스 경로가 None이면 디렉토리 생성
     if not workspace.path:
+        print("워크스페이스 경로가 None임. 디렉토리 생성 중...")
         from ..utils.workspace import create_workspace_directory
         workspace_path = create_workspace_directory(current_user.id, workspace.id)
+        print(f"워크스페이스 디렉토리 생성됨: {workspace_path}")
         # 데이터베이스 업데이트
         workspace.path = workspace_path
         db.commit()
         db.refresh(workspace)
     
     target_path = os.path.join(workspace.path, path) if path else workspace.path
+    print(f"대상 경로: {target_path}")
     
     # 경로가 존재하지 않으면 생성
     if not os.path.exists(target_path):
+        print(f"경로가 존재하지 않음. 생성 중: {target_path}")
         try:
             os.makedirs(target_path, exist_ok=True)
+            print(f"경로 생성 성공: {target_path}")
         except Exception as e:
+            print(f"경로 생성 실패: {str(e)}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Failed to create directory: {str(e)}"
             )
+    else:
+        print(f"경로가 이미 존재함: {target_path}")
     
     files = []
-    for item in os.listdir(target_path):
-        item_path = os.path.join(target_path, item)
-        is_dir = os.path.isdir(item_path)
-        size = os.path.getsize(item_path) if not is_dir else 0
+    try:
+        for item in os.listdir(target_path):
+            item_path = os.path.join(target_path, item)
+            is_dir = os.path.isdir(item_path)
+            size = os.path.getsize(item_path) if not is_dir else 0
+            
+            files.append({
+                "name": item,
+                "is_directory": is_dir,
+                "size": size,
+                "path": os.path.join(path, item) if path else item
+            })
         
-        files.append({
-            "name": item,
-            "is_directory": is_dir,
-            "size": size,
-            "path": os.path.join(path, item) if path else item
-        })
-    
-    return {"files": files, "current_path": path}
+        print(f"파일 목록 반환: {len(files)}개 항목")
+        return {"files": files, "current_path": path}
+    except Exception as e:
+        print(f"파일 목록 조회 실패: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to list directory: {str(e)}"
+        )
 
 @router.post("/{workspace_id}/upload")
 async def upload_file(
