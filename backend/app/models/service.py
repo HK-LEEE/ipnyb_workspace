@@ -2,16 +2,17 @@ from sqlalchemy import Column, Integer, String, DateTime, Boolean, Text, Foreign
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.mysql import CHAR
+from sqlalchemy.dialects.postgresql import UUID
 from ..database import Base
 
 # 다대다 관계를 위한 연결 테이블
 user_service_association = Table(
     'user_services',
     Base.metadata,
-    Column('user_id', CHAR(36), ForeignKey('users.id'), primary_key=True),
+    Column('user_id', UUID(as_uuid=True), ForeignKey('users.id'), primary_key=True),
     Column('service_id', Integer, ForeignKey('services.id'), primary_key=True),
     Column('granted_at', DateTime, default=func.now()),
-    Column('granted_by', CHAR(36), ForeignKey('users.id'))
+    Column('granted_by', UUID(as_uuid=True), ForeignKey('users.id'))
 )
 
 role_service_association = Table(
@@ -20,7 +21,7 @@ role_service_association = Table(
     Column('role_id', Integer, ForeignKey('roles.id'), primary_key=True),
     Column('service_id', Integer, ForeignKey('services.id'), primary_key=True),
     Column('granted_at', DateTime, default=func.now()),
-    Column('granted_by', CHAR(36), ForeignKey('users.id'))
+    Column('granted_by', UUID(as_uuid=True), ForeignKey('users.id'))
 )
 
 class Service(Base):
@@ -50,7 +51,7 @@ class Service(Base):
     # 시스템 정보
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
-    created_by = Column(CHAR(36), ForeignKey('users.id'), nullable=False)
+    created_by = Column(UUID(as_uuid=True), ForeignKey('users.id'), nullable=False)
     
     # 관계 정의
     creator = relationship("User", foreign_keys=[created_by])
@@ -74,7 +75,7 @@ class UserServicePermission(Base):
     __tablename__ = "user_service_permissions"
     
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(CHAR(36), ForeignKey('users.id'), nullable=False)
+    user_id = Column(UUID(as_uuid=True), ForeignKey('users.id'), nullable=False)
     service_id = Column(Integer, ForeignKey('services.id'), nullable=False)
     
     # 권한 세부사항
@@ -83,7 +84,7 @@ class UserServicePermission(Base):
     
     # 권한 부여 정보
     granted_at = Column(DateTime, default=func.now())
-    granted_by = Column(CHAR(36), ForeignKey('users.id'), nullable=False)
+    granted_by = Column(UUID(as_uuid=True), ForeignKey('users.id'), nullable=False)
     expires_at = Column(DateTime, nullable=True, comment="권한 만료일")
     
     # 상태

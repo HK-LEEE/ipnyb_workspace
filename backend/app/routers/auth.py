@@ -1,8 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, EmailStr
-from typing import List
+from typing import List, Optional, Union
 from passlib.context import CryptContext
 from passlib.hash import bcrypt
 from jose import JWTError, jwt
@@ -10,21 +10,24 @@ from datetime import datetime, timedelta
 import json
 import re
 import os
+import logging
 from dotenv import load_dotenv
 from sqlalchemy.sql import func
+import uuid as uuid_module
+from sqlalchemy.dialects.postgresql import UUID
 
 from ..database import get_db
-from ..models import User, Role, Group, Permission, Feature
+from ..models import User, Role, Group, Permission, Feature, RefreshToken
+from ..config import settings
+from ..utils.auth import get_current_user, verify_password, get_password_hash, create_access_token, create_refresh_token
 
 # 환경변수 로드
 load_dotenv()
 
-router = APIRouter()
+# 로거 설정
+logger = logging.getLogger(__name__)
 
-# 설정
-SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-here")
-ALGORITHM = os.getenv("ALGORITHM", "HS256")
-ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
+router = APIRouter()
 
 # 비밀번호 해싱 - bcrypt 호환성 개선
 try:
@@ -32,23 +35,33 @@ try:
     pwd_context = CryptContext(
         schemes=["bcrypt"], 
         deprecated="auto",
-        bcrypt__rounds=12
+        bcrypt__rounds=12,
+        bcrypt__ident="2b"  # bcrypt 식별자 명시
     )
+    
+    # 테스트 해싱으로 bcrypt 작동 확인
+    test_hash = pwd_context.hash("test")
+    pwd_context.verify("test", test_hash)
+    logger.info("bcrypt 해싱 시스템 정상 작동 확인")
+    
 except Exception as e:
+    logger.warning(f"bcrypt 설정 실패, 대체 방법 사용: {e}")
     # 대체 방법: 직접 bcrypt 사용
     class PasswordContext:
         @staticmethod
         def verify(plain_password: str, hashed_password: str) -> bool:
             try:
                 return bcrypt.verify(plain_password, hashed_password)
-            except:
+            except Exception as e:
+                logger.error(f"비밀번호 검증 실패: {e}")
                 return False
         
         @staticmethod
         def hash(password: str) -> str:
             try:
-                return bcrypt.hash(password)
-            except:
+                return bcrypt.hash(password, rounds=12)
+            except Exception as e:
+                logger.error(f"비밀번호 해싱 실패: {e}")
                 # 최후의 수단: 간단한 해싱 (개발용)
                 import hashlib
                 return hashlib.sha256(password.encode()).hexdigest()
@@ -84,8 +97,18 @@ class PasswordChange(BaseModel):
 
 class Token(BaseModel):
     access_token: str
+    refresh_token: str
     token_type: str
+    expires_in: int
     user: dict
+
+class TokenRefresh(BaseModel):
+    refresh_token: str
+
+class AccessTokenResponse(BaseModel):
+    access_token: str
+    token_type: str
+    expires_in: int
 
 class UserResponse(BaseModel):
     id: str  # UUID
@@ -107,13 +130,7 @@ class UserResponse(BaseModel):
     class Config:
         from_attributes = True
 
-# 유틸리티 함수들
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return pwd_context.verify(plain_password, hashed_password)
-
-def hash_password(password: str) -> str:
-    return pwd_context.hash(password)
-
+# 유틸리티 함수들 - utils.auth에서 가져온 함수들 사용
 def validate_phone_number(phone: str) -> bool:
     """휴대폰 번호 유효성 검사"""
     pattern = r'^01[016789]-?\d{3,4}-?\d{4}$'
@@ -123,51 +140,99 @@ def generate_default_password(phone_last_digits: str) -> str:
     """휴대폰 뒷자리로 기본 패스워드 생성"""
     return f"temp{phone_last_digits}!"
 
-def create_access_token(data: dict, expires_delta: timedelta = None):
-    to_encode = data.copy()
-    if expires_delta:
-        expire = datetime.utcnow() + expires_delta
+def store_refresh_token(
+    db: Session, 
+    user_id, 
+    refresh_token: str, 
+    expires_at: datetime, 
+    request: Request = None
+):
+    """Refresh Token을 데이터베이스에 저장"""
+    # user_id가 UUID 객체인 경우 그대로 사용, 문자열인 경우 변환
+    if isinstance(user_id, str):
+        try:
+            user_uuid = uuid_module.UUID(user_id)
+        except ValueError:
+            raise ValueError(f"Invalid UUID format: {user_id}")
     else:
-        expire = datetime.utcnow() + timedelta(minutes=15)
-    to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-    return encoded_jwt
+        user_uuid = user_id
+    
+    # 기존 활성 토큰 무효화 (선택적)
+    db.query(RefreshToken).filter(
+        RefreshToken.user_id == user_uuid,
+        RefreshToken.is_active == True
+    ).update({"is_active": False})
+    
+    # 새 토큰 저장
+    token_record = RefreshToken(
+        token=refresh_token,
+        user_id=user_uuid,
+        expires_at=expires_at,
+        device_info=request.headers.get("user-agent", "") if request else "",
+        ip_address=request.client.host if request else "",
+        user_agent=request.headers.get("user-agent", "") if request else ""
+    )
+    
+    db.add(token_record)
+    db.commit()
+    return token_record
+
+def verify_refresh_token(db: Session, refresh_token: str) -> Optional[RefreshToken]:
+    """Refresh Token 검증"""
+    try:
+        # JWT 디코딩
+        payload = jwt.decode(refresh_token, settings.secret_key, algorithms=[settings.algorithm])
+        
+        # 토큰 타입 확인
+        if payload.get("type") != "refresh":
+            return None
+            
+        user_id = payload.get("sub")
+        if not user_id:
+            return None
+        
+        # 문자열을 UUID 객체로 변환
+        try:
+            user_uuid = uuid_module.UUID(user_id)
+        except ValueError:
+            return None
+        
+        # 데이터베이스에서 토큰 조회
+        token_record = db.query(RefreshToken).filter(
+            RefreshToken.token == refresh_token,
+            RefreshToken.user_id == user_uuid
+        ).first()
+        
+        if not token_record or not token_record.is_valid():
+            return None
+            
+        return token_record
+        
+    except JWTError:
+        return None
 
 def get_user_by_email(db: Session, email: str):
     return db.query(User).filter(User.email == email).first()
 
 def get_user_by_id(db: Session, user_id: str):
-    return db.query(User).filter(User.id == user_id).first()
+    try:
+        # 문자열을 UUID 객체로 변환
+        uuid_obj = uuid_module.UUID(user_id)
+        return db.query(User).filter(User.id == uuid_obj).first()
+    except ValueError:
+        # 유효하지 않은 UUID 형식
+        return None
 
 def get_user_by_phone(db: Session, phone: str):
     return db.query(User).filter(User.phone_number == phone).first()
 
 def authenticate_user(db: Session, email: str, password: str):
+    """사용자 인증"""
     user = get_user_by_email(db, email)
     if not user:
         return False
     if not verify_password(password, user.hashed_password):
         return False
-    
-    return user
-
-def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        user_id: str = payload.get("sub")  # UUID 문자열
-        if user_id is None:
-            raise credentials_exception
-    except JWTError:
-        raise credentials_exception
-    
-    user = get_user_by_id(db, user_id)
-    if user is None:
-        raise credentials_exception
     return user
 
 def get_current_admin_user(current_user: User = Depends(get_current_user)):
@@ -181,7 +246,7 @@ def get_current_admin_user(current_user: User = Depends(get_current_user)):
 
 # 라우트들
 @router.post("/register", response_model=Token)
-async def register(user_data: UserCreate, db: Session = Depends(get_db)):
+async def register(user_data: UserCreate, request: Request, db: Session = Depends(get_db)):
     # 이메일 중복 확인
     if get_user_by_email(db, user_data.email):
         raise HTTPException(
@@ -203,185 +268,257 @@ async def register(user_data: UserCreate, db: Session = Depends(get_db)):
             detail="이미 등록된 휴대폰 번호입니다."
         )
     
-    # 새 사용자 생성
-    hashed_password = hash_password(user_data.password)
-    new_user = User(
+    # 사용자 생성
+    hashed_password = get_password_hash(user_data.password)
+    
+    db_user = User(
         real_name=user_data.real_name,
         display_name=user_data.display_name or user_data.real_name,
         email=user_data.email,
         phone_number=user_data.phone_number,
+        hashed_password=hashed_password,
         department=user_data.department,
         position=user_data.position,
-        hashed_password=hashed_password,
-        is_active=False,  # 승인 대기 상태로 변경
-        is_admin=False,
-        is_verified=False,
-        approval_status='pending',  # 승인 대기 상태
-        login_count=0  # 로그인 전이므로 0으로 설정
+        is_verified=False,  # 이메일 인증 필요
+        approval_status="pending"  # 관리자 승인 필요
     )
     
-    db.add(new_user)
+    db.add(db_user)
     db.commit()
-    db.refresh(new_user)
+    db.refresh(db_user)
     
-    # 기본 역할 및 그룹 할당
-    user_role = db.query(Role).filter(Role.name == "user").first()
-    if user_role:
-        new_user.role_id = user_role.id
-        
-    default_group = db.query(Group).filter(Group.name == "Default Users").first()
-    if default_group:
-        new_user.group_id = default_group.id
+    # JWT 토큰 생성
+    access_token_expires = timedelta(minutes=settings.access_token_expire_minutes)
+    refresh_token_expires = timedelta(days=settings.refresh_token_expire_days)
     
-    # 요청된 권한과 기능 할당 (승인 필요한 것들은 관리자가 나중에 승인)
-    if user_data.requested_permissions:
-        requested_permissions = db.query(Permission).filter(
-            Permission.id.in_(user_data.requested_permissions),
-            Permission.is_active == True
-        ).all()
-        # 기본 권한만 자동 부여, 나머지는 승인 대기
-        basic_permissions = [p for p in requested_permissions if p.category == 'basic']
-        new_user.permissions = basic_permissions
-    
-    if user_data.requested_features:
-        requested_features = db.query(Feature).filter(
-            Feature.id.in_(user_data.requested_features),
-            Feature.is_active == True
-        ).all()
-        # 승인이 필요하지 않은 기능만 자동 부여
-        auto_features = [f for f in requested_features if not f.requires_approval]
-        new_user.features = auto_features
-    
-    db.commit()
-    db.refresh(new_user)  # 관계 데이터 로드
-    
-    # JWT 토큰 생성 (UUID 사용)
-    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
-        data={"sub": new_user.id}, expires_delta=access_token_expires
+        data={"sub": str(db_user.id)}, 
+        expires_delta=access_token_expires
     )
     
-    # 사용자 정보 반환용 데이터 준비
-    user_data_dict = {
-        "id": new_user.id,
-        "real_name": new_user.real_name,
-        "display_name": new_user.display_name,
-        "email": new_user.email,
-        "phone_number": new_user.phone_number,
-        "department": new_user.department,
-        "position": new_user.position,
-        "is_active": new_user.is_active,
-        "is_admin": new_user.is_admin,
-        "is_verified": new_user.is_verified,
-        "login_count": new_user.login_count,
-        "roles": [{"id": new_user.role.id, "name": new_user.role.name}] if new_user.role else [],
-        "groups": [{"id": new_user.group.id, "name": new_user.group.name}] if new_user.group else []
-    }
+    refresh_token = create_refresh_token(
+        data={"sub": str(db_user.id)}
+    )
+    
+    # Refresh Token 저장
+    refresh_expires_at = datetime.utcnow() + refresh_token_expires
+    store_refresh_token(db, db_user.id, refresh_token, refresh_expires_at, request)
     
     return {
         "access_token": access_token,
+        "refresh_token": refresh_token,
         "token_type": "bearer",
-        "user": user_data_dict
+        "expires_in": settings.access_token_expire_minutes * 60,
+        "user": {
+            "id": str(db_user.id),
+            "real_name": db_user.real_name,
+            "display_name": db_user.display_name,
+            "email": db_user.email,
+            "is_admin": db_user.is_admin,
+            "is_verified": db_user.is_verified,
+            "approval_status": db_user.approval_status
+        }
     }
 
 @router.post("/login", response_model=Token)
-async def login(user_data: UserLogin, db: Session = Depends(get_db)):
-    user = authenticate_user(db, user_data.email, user_data.password)
-    if not user:
+async def login(user_data: UserLogin, request: Request, db: Session = Depends(get_db)):
+    """사용자 로그인"""
+    try:
+        logger.info(f"로그인 시도: {user_data.email}")
+        
+        # 사용자 인증
+        user = authenticate_user(db, user_data.email, user_data.password)
+        if not user:
+            logger.warning(f"인증 실패: {user_data.email}")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="이메일 또는 비밀번호가 올바르지 않습니다.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        
+        if not user.is_active:
+            logger.warning(f"비활성 계정 로그인 시도: {user_data.email}")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="비활성화된 계정입니다."
+            )
+        
+        logger.info(f"사용자 인증 성공: {user.email} (ID: {user.id})")
+        
+        # 로그인 기록 업데이트
+        try:
+            user.last_login_at = datetime.utcnow()
+            user.login_count += 1
+            db.commit()
+            logger.info(f"로그인 기록 업데이트 완료: {user.email}")
+        except Exception as e:
+            logger.error(f"로그인 기록 업데이트 실패: {e}")
+            db.rollback()
+            # 계속 진행 (기록 업데이트 실패가 로그인을 막지 않음)
+        
+        # JWT 토큰 생성 (그룹 정보 포함)
+        access_token_expires = timedelta(minutes=settings.access_token_expire_minutes)
+        refresh_token_expires = timedelta(days=settings.refresh_token_expire_days)
+        
+        # 토큰에 포함할 데이터 준비
+        token_data = {
+            "sub": str(user.id),
+            "user_id": str(user.id),
+            "email": user.email,
+            "is_admin": user.is_admin
+        }
+        
+        # 그룹 정보 추가
+        if user.group:
+            token_data["group_id"] = str(user.group.id)
+            token_data["group_name"] = user.group.name
+        
+        # 역할 정보 추가
+        if user.role:
+            token_data["role_id"] = str(user.role.id)
+            token_data["role_name"] = user.role.name
+        
+        access_token = create_access_token(
+            data=token_data, 
+            expires_delta=access_token_expires
+        )
+        
+        refresh_token = create_refresh_token(
+            data={"sub": str(user.id)}
+        )
+        
+        logger.info(f"JWT 토큰 생성 완료: {user.email}")
+        
+        # Refresh Token 저장
+        try:
+            refresh_expires_at = datetime.utcnow() + refresh_token_expires
+            store_refresh_token(db, user.id, refresh_token, refresh_expires_at, request)
+            logger.info(f"Refresh Token 저장 완료: {user.email}")
+        except Exception as e:
+            logger.error(f"Refresh Token 저장 실패: {e}")
+            # Refresh Token 저장 실패시에도 로그인 진행
+        
+        logger.info(f"로그인 성공: {user.email}")
+        
+        return {
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "token_type": "bearer",
+            "expires_in": settings.access_token_expire_minutes * 60,
+            "user": {
+                "id": str(user.id),
+                "real_name": user.real_name,
+                "display_name": user.display_name,
+                "email": user.email,
+                "is_admin": user.is_admin,
+                "is_verified": user.is_verified,
+                "approval_status": user.approval_status
+            }
+        }
+        
+    except HTTPException:
+        # FastAPI HTTPException은 그대로 전달
+        raise
+    except Exception as e:
+        logger.error(f"로그인 처리 중 예상치 못한 오류: {e}")
+        import traceback
+        logger.error(f"상세 오류: {traceback.format_exc()}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="서버 내부 오류가 발생했습니다."
+        )
+
+@router.post("/refresh", response_model=AccessTokenResponse)
+async def refresh_token(token_data: TokenRefresh, db: Session = Depends(get_db)):
+    """Refresh Token으로 새로운 Access Token 발급"""
+    token_record = verify_refresh_token(db, token_data.refresh_token)
+    
+    if not token_record:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="이메일 또는 비밀번호가 올바르지 않습니다.",
-            headers={"WWW-Authenticate": "Bearer"},
+            detail="유효하지 않은 refresh token입니다."
         )
     
-    if not user.is_active:
+    # 사용자 정보 조회
+    user = get_user_by_id(db, token_record.user_id)
+    if not user or not user.is_active:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="비활성화된 계정입니다."
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="유효하지 않은 사용자입니다."
         )
     
-    # 로그인 카운트 증가
-    user.login_count += 1
-    user.last_login_at = func.now()
-    db.commit()
-    db.refresh(user)  # 관계 데이터 로드
-    
-    # JWT 토큰 생성 (UUID 사용)
-    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    # 새로운 Access Token 생성
+    access_token_expires = timedelta(minutes=settings.access_token_expire_minutes)
     access_token = create_access_token(
-        data={"sub": user.id}, expires_delta=access_token_expires
+        data={"sub": str(user.id)}, 
+        expires_delta=access_token_expires
     )
     
-    # 사용자 정보 반환용 데이터 준비
-    user_data_dict = {
-        "id": user.id,
-        "real_name": user.real_name,
-        "display_name": user.display_name,
-        "email": user.email,
-        "phone_number": user.phone_number,
-        "department": user.department,
-        "position": user.position,
-        "is_active": user.is_active,
-        "is_admin": user.is_admin,
-        "is_verified": user.is_verified,
-        "login_count": user.login_count,
-        "roles": [{"id": user.role.id, "name": user.role.name}] if user.role else [],
-        "groups": [{"id": user.group.id, "name": user.group.name}] if user.group else []
-    }
+    # Refresh Token 사용 기록
+    token_record.use()
+    db.commit()
     
     return {
         "access_token": access_token,
         "token_type": "bearer",
-        "user": user_data_dict
+        "expires_in": settings.access_token_expire_minutes * 60
     }
 
-@router.post("/reset-password")
-async def reset_password(reset_data: PasswordReset, db: Session = Depends(get_db)):
-    """휴대폰 번호 뒷자리로 패스워드 초기화"""
+@router.post("/logout")
+async def logout(
+    request: Request,
+    refresh_token: str = None, 
+    current_user: User = Depends(get_current_user), 
+    db: Session = Depends(get_db)
+):
+    """로그아웃 - Refresh Token 무효화"""
+    if refresh_token:
+        # 특정 Refresh Token 무효화
+        token_record = db.query(RefreshToken).filter(
+            RefreshToken.token == refresh_token,
+            RefreshToken.user_id == current_user.id
+        ).first()
+        
+        if token_record:
+            token_record.revoke()
+            db.commit()
+    else:
+        # 모든 Refresh Token 무효화
+        db.query(RefreshToken).filter(
+            RefreshToken.user_id == current_user.id,
+            RefreshToken.is_active == True
+        ).update({"is_active": False, "is_revoked": True})
+        db.commit()
     
-    # 사용자 찾기
-    user = get_user_by_email(db, reset_data.email)
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="등록되지 않은 이메일입니다."
-        )
-    
-    # 휴대폰 번호 뒷자리 검증
-    if not user.phone_number:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="등록된 휴대폰 번호가 없습니다."
-        )
-    
-    phone_digits = user.phone_number.replace('-', '').replace(' ', '')
-    last_digits = phone_digits[-4:]  # 뒷자리 4자리
-    
-    if reset_data.phone_last_digits != last_digits:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="휴대폰 번호 뒷자리가 일치하지 않습니다."
-        )
-    
-    # 임시 비밀번호 생성 및 설정
-    temp_password = generate_default_password(last_digits)
-    user.hashed_password = hash_password(temp_password)
+    return {"message": "성공적으로 로그아웃되었습니다."}
+
+@router.post("/revoke-all-tokens")
+async def revoke_all_tokens(
+    request: Request,
+    current_user: User = Depends(get_current_user), 
+    db: Session = Depends(get_db)
+):
+    """모든 기기의 토큰 무효화"""
+    db.query(RefreshToken).filter(
+        RefreshToken.user_id == current_user.id
+    ).update({
+        "is_active": False, 
+        "is_revoked": True,
+        "revoked_at": func.now()
+    })
     db.commit()
     
-    return {
-        "message": "비밀번호가 초기화되었습니다.",
-        "temp_password": temp_password,
-        "note": "보안을 위해 로그인 후 비밀번호를 변경해주세요."
-    }
+    return {"message": "모든 기기의 토큰이 무효화되었습니다."}
 
 @router.get("/me", response_model=UserResponse)
-async def get_current_user_info(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    """현재 로그인한 사용자 정보 반환"""
-    # 관계 데이터를 명시적으로 로드
-    db.refresh(current_user)
-    
+async def get_current_user_info(
+    request: Request,
+    current_user: User = Depends(get_current_user), 
+    db: Session = Depends(get_db)
+):
+    # 사용자 정보 반환
     return UserResponse(
-        id=current_user.id,
+        id=str(current_user.id),
         real_name=current_user.real_name,
         display_name=current_user.display_name,
         email=current_user.email,
@@ -394,22 +531,43 @@ async def get_current_user_info(current_user: User = Depends(get_current_user), 
         created_at=current_user.created_at,
         last_login_at=current_user.last_login_at,
         login_count=current_user.login_count,
-        roles=[{"id": current_user.role.id, "name": current_user.role.name, "description": current_user.role.description}] if current_user.role else [],
-        groups=[{"id": current_user.group.id, "name": current_user.group.name, "description": current_user.group.description}] if current_user.group else []
+        roles=[],  # TODO: 역할 정보 추가
+        groups=[]  # TODO: 그룹 정보 추가
     )
 
-@router.post("/logout")
-async def logout():
-    """로그아웃 (클라이언트에서 토큰 삭제)"""
-    return {"message": "로그아웃되었습니다."}
+@router.post("/reset-password")
+async def reset_password(reset_data: PasswordReset, request: Request, db: Session = Depends(get_db)):
+    user = get_user_by_email(db, reset_data.email)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="해당 이메일의 사용자를 찾을 수 없습니다."
+        )
+    
+    # 휴대폰 뒷자리 확인
+    if not user.phone_number or not user.phone_number.endswith(reset_data.phone_last_digits):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="휴대폰 번호 뒷자리가 일치하지 않습니다."
+        )
+    
+    # 임시 비밀번호 생성 및 설정
+    temp_password = generate_default_password(reset_data.phone_last_digits)
+    user.hashed_password = get_password_hash(temp_password)
+    db.commit()
+    
+    return {
+        "message": "임시 비밀번호가 설정되었습니다.",
+        "temp_password": temp_password
+    }
 
 @router.post("/change-password")
 async def change_password(
-    password_data: PasswordChange, 
+    password_data: PasswordChange,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """사용자 본인 비밀번호 변경"""
     # 현재 비밀번호 확인
     if not verify_password(password_data.current_password, current_user.hashed_password):
         raise HTTPException(
@@ -417,8 +575,8 @@ async def change_password(
             detail="현재 비밀번호가 올바르지 않습니다."
         )
     
-    # 새 비밀번호 해시화 및 저장
-    current_user.hashed_password = hash_password(password_data.new_password)
+    # 새 비밀번호로 변경
+    current_user.hashed_password = get_password_hash(password_data.new_password)
     db.commit()
     
     return {"message": "비밀번호가 성공적으로 변경되었습니다."} 

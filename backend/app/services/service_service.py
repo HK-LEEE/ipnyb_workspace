@@ -21,25 +21,22 @@ class ServiceService:
         
         accessible_features = set()
         
-        # 1. 역할 기반 기능 조회
-        if user.role:
-            for feature in user.role.features:
-                if feature.is_active:
-                    accessible_features.add(feature.id)
-        
-        # 2. 그룹 기반 기능 조회
+        # 그룹 기반 기능 조회 (주요 권한 확인 방식)
         if user.group:
             for feature in user.group.features:
                 if feature.is_active:
                     accessible_features.add(feature.id)
         
-        # 3. 개별 사용자 기능 조회
+        # 개별 사용자 기능 조회 (추가 권한)
         for feature in user.features:
             if feature.is_active:
                 accessible_features.add(feature.id)
         
-        # 기능 정보 조회 및 변환
-        features = db.query(Feature).filter(
+        # 기능 정보 조회 및 변환 (카테고리 관계 포함)
+        from sqlalchemy.orm import joinedload
+        features = db.query(Feature).options(
+            joinedload(Feature.feature_category)
+        ).filter(
             Feature.id.in_(accessible_features),
             Feature.is_active == True
         ).all()
@@ -48,6 +45,11 @@ class ServiceService:
         for feature in features:
             # 외부 URL인지 내부 경로인지 판단
             is_external = feature.url_path and feature.url_path.startswith('http')
+            
+            # 카테고리 정보 가져오기 (관계를 통해)
+            category_name = None
+            if feature.feature_category:
+                category_name = feature.feature_category.name
             
             feature_list.append({
                 "service_id": feature.id,
@@ -59,8 +61,8 @@ class ServiceService:
                 "thumbnail_url": None,
                 "is_external": is_external,
                 "open_in_new_tab": is_external,  # 외부 URL은 새 탭에서
-                "category": feature.category,
-                "sort_order": 0
+                "category": category_name or "기타",
+                "sort_order": feature.sort_order or 0
             })
         
         return sorted(feature_list, key=lambda x: (x['category'], x['service_display_name']))
@@ -110,33 +112,50 @@ class ServiceService:
         # 접근 가능한 기능 목록 조회 (그룹 기반)
         services = ServiceService.get_user_accessible_services(db, user_id)
         
-        # 카테고리 목록을 기능 카테고리 기반으로 동적 생성
+        # 실제 FeatureCategory 테이블에서 카테고리 정보 조회
+        from ..models.permission import FeatureCategory
+        
+        # 서비스에서 사용 중인 카테고리들 추출
         categories_from_features = set()
         for service in services:
             if service.category:
                 categories_from_features.add(service.category)
         
-        category_mapping = {
-            'core': {'display_name': '핵심 기능', 'sort_order': 1},
-            'analysis': {'display_name': '분석 도구', 'sort_order': 2},
-            'ai': {'display_name': 'AI 서비스', 'sort_order': 3},
-            'admin': {'display_name': '관리 도구', 'sort_order': 4},
-            'utility': {'display_name': '유틸리티', 'sort_order': 5}
-        }
+        # FeatureCategory 테이블에서 해당 카테고리들의 정보 조회
+        feature_categories = db.query(FeatureCategory).filter(
+            FeatureCategory.name.in_(categories_from_features),
+            FeatureCategory.is_active == True
+        ).order_by(FeatureCategory.sort_order).all()
         
+        # 카테고리 정보를 딕셔너리로 매핑
+        category_info_map = {}
+        for cat in feature_categories:
+            category_info_map[cat.name] = {
+                "name": cat.name,
+                "display_name": cat.display_name,
+                "description": cat.description or f"{cat.display_name} 관련 기능들",
+                "sort_order": cat.sort_order,
+                "icon": cat.icon,
+                "color": cat.color
+            }
+        
+        # 카테고리 목록 생성 (FeatureCategory의 sort_order 기준으로 정렬)
         category_list = []
         for cat_name in categories_from_features:
-            cat_info = category_mapping.get(cat_name, {
-                'display_name': cat_name.title(), 
-                'sort_order': 99
-            })
-            category_list.append({
-                "name": cat_name,
-                "display_name": cat_info['display_name'],
-                "description": f"{cat_info['display_name']} 관련 기능들",
-                "sort_order": cat_info['sort_order']
-            })
+            if cat_name in category_info_map:
+                category_list.append(category_info_map[cat_name])
+            else:
+                # FeatureCategory에 없는 카테고리의 경우 기본값 사용
+                category_list.append({
+                    "name": cat_name,
+                    "display_name": cat_name.title(),
+                    "description": f"{cat_name.title()} 관련 기능들",
+                    "sort_order": 99,
+                    "icon": None,
+                    "color": None
+                })
         
+        # sort_order 기준으로 정렬
         category_list.sort(key=lambda x: x['sort_order'])
         
         return MotherPageResponse(

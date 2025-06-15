@@ -3,16 +3,33 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import os
 
-from .routers import auth, workspace, jupyter, files, llm, service, admin, llmops
+# 먼저 모든 모델을 import하여 테이블 생성 시 인식되도록 함
+from .models.user import User, Group, Role
+from .models.workspace import Workspace
+from .models.service import Service, ServiceCategory, UserServicePermission
+from .models.permission import Permission, Feature
+from .models.refresh_token import RefreshToken
+from .llmops.models import RAGDataSource, Flow, FlowExecution, FlowExecutionLog, Secret
+# Flow Studio 모델 추가
+from .models.flow_studio import (
+    Project, FlowStudioFlow, ComponentTemplate, 
+    FlowComponent, FlowConnection, FlowStudioExecution
+)
+
+# 모델 import 후에 database 모듈 import
 from .database import create_tables
-# 모든 모델을 import하여 테이블 생성 시 인식되도록 함
-from .models import User, Group, Role, Workspace, Service, ServiceCategory, UserServicePermission, Permission, Feature
+from .routers import auth, workspace, jupyter, files, llm, service, admin, chroma
+from .llmops import router as llmops_router
+# Flow Studio 라우터 추가
+from .routers import flow_studio
 
 # FastAPI 앱 생성
 app = FastAPI(
-    title="Jupyter Data Platform API",
-    description="Jupyter 기반 데이터 분석 플랫폼",
-    version="1.0.0"
+    title="MAI-X API",
+    description="Manufacturing Artificial Intelligence & DX Platform API",
+    version="1.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc"
 )
 
 # CORS 미들웨어 추가
@@ -24,7 +41,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 데이터베이스 테이블 생성
+# 모든 모델 import 후 데이터베이스 테이블 생성
 create_tables()
 
 # 라우터 추가
@@ -34,8 +51,12 @@ app.include_router(workspace.router, prefix="/api", tags=["Workspaces"])
 app.include_router(jupyter.router, prefix="/api", tags=["Jupyter"])
 app.include_router(files.router, prefix="/api/files", tags=["Files"])
 app.include_router(llm.router, prefix="/api/llm", tags=["LLM"])
-app.include_router(llmops.router, prefix="/api", tags=["LLMOps"])
+app.include_router(llmops_router, tags=["LLMOps"])
 app.include_router(service.router)
+# Flow Studio 라우터 추가
+app.include_router(flow_studio.router, tags=["Flow Studio"])
+# ChromaDB 라우터 추가
+app.include_router(chroma.router, tags=["ChromaDB"])
 
 # 정적 파일 서빙 (업로드된 파일용)
 if not os.path.exists("data"):

@@ -1,7 +1,12 @@
 export interface User {
-  id: number
+  id: string
   username: string
   email: string
+  real_name?: string
+  display_name?: string
+  phone_number?: string
+  department?: string
+  position?: string
   is_active: boolean
   is_admin: boolean
   created_at: string

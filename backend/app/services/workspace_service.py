@@ -15,8 +15,8 @@ class WorkspaceService:
         db_workspace = Workspace(
             name=workspace_data.name,
             description=workspace_data.description,
-            path="",  # 임시로 빈 값
-            owner_id=user.id
+            path=None,  # 임시로 None - 나중에 업데이트
+            owner_id=user.id  # UUID 그대로 사용
         )
         self.db.add(db_workspace)
         self.db.commit()
@@ -28,17 +28,18 @@ class WorkspaceService:
         # 경로 업데이트
         db_workspace.path = workspace_path
         self.db.commit()
+        self.db.refresh(db_workspace)
         
         return db_workspace
     
-    def get_user_workspaces(self, user_id: str) -> List[Workspace]:
+    def get_user_workspaces(self, user_id) -> List[Workspace]:
         """사용자의 워크스페이스 목록 조회"""
         return self.db.query(Workspace).filter(
             Workspace.owner_id == user_id,
             Workspace.is_active == True
         ).all()
     
-    def get_workspace_by_id(self, workspace_id: int, user_id: str):
+    def get_workspace_by_id(self, workspace_id: int, user_id):
         """워크스페이스 ID로 조회 (사용자 소유 확인)"""
         return self.db.query(Workspace).filter(
             Workspace.id == workspace_id,
@@ -46,7 +47,7 @@ class WorkspaceService:
             Workspace.is_active == True
         ).first()
     
-    def delete_workspace(self, workspace_id: int, user_id: str) -> bool:
+    def delete_workspace(self, workspace_id: int, user_id) -> bool:
         """워크스페이스 삭제 (소프트 삭제)"""
         workspace = self.get_workspace_by_id(workspace_id, user_id)
         if not workspace:

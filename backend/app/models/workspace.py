@@ -1,22 +1,22 @@
 from sqlalchemy import Column, Integer, String, DateTime, Boolean, Text, ForeignKey
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
-from sqlalchemy.dialects.mysql import CHAR
+from sqlalchemy.dialects.postgresql import UUID
 from ..database import Base
 
 class Workspace(Base):
     __tablename__ = "workspaces"
     
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(100), nullable=False)
-    description = Column(Text, nullable=True)
+    name = Column(String(100), nullable=False, comment="워크스페이스명")
+    description = Column(Text, nullable=True, comment="워크스페이스 설명")
     
-    # UUID 기반 사용자 참조
-    owner_id = Column(CHAR(36), ForeignKey('users.id'), nullable=False)
+    # 소유자 정보 - PostgreSQL UUID 타입 사용
+    owner_id = Column(UUID(as_uuid=True), ForeignKey('users.id'), nullable=False)
     
-    # 워크스페이스 설정
-    is_active = Column(Boolean, default=True)
-    is_public = Column(Boolean, default=False)
+    # 상태 정보
+    is_active = Column(Boolean, default=True, comment="활성화 상태")
+    is_private = Column(Boolean, default=False, comment="비공개 워크스페이스 여부")
     
     # Jupyter 설정
     jupyter_port = Column(Integer, nullable=True)

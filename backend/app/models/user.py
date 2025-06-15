@@ -1,20 +1,20 @@
 from sqlalchemy import Column, Integer, String, DateTime, Boolean, Text, ForeignKey
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
-from sqlalchemy.dialects.mysql import CHAR
+from sqlalchemy.dialects.postgresql import UUID
 import uuid
 from ..database import Base
 from .tables import user_permissions, user_features, role_permissions, role_features, group_permissions, group_features
 
 def generate_user_id():
     """사용자 고유 ID 생성 (UUID 기반)"""
-    return str(uuid.uuid4())
+    return uuid.uuid4()
 
 class User(Base):
     __tablename__ = "users"
     
-    # UUID 기반 고유 ID
-    id = Column(CHAR(36), primary_key=True, default=generate_user_id, index=True)
+    # PostgreSQL 네이티브 UUID 타입 사용
+    id = Column(UUID(as_uuid=True), primary_key=True, default=generate_user_id, index=True)
     
     # 실제 사용자 정보
     real_name = Column(String(100), nullable=False, comment="실제 사용자 이름")  # 실명
@@ -31,7 +31,7 @@ class User(Base):
     is_verified = Column(Boolean, default=False, comment="이메일 인증 여부")
     approval_status = Column(String(20), default='pending', comment="승인 상태: pending, approved, rejected")
     approval_note = Column(Text, nullable=True, comment="승인/거부 사유")
-    approved_by = Column(CHAR(36), ForeignKey('users.id'), nullable=True, comment="승인한 관리자")
+    approved_by = Column(UUID(as_uuid=True), ForeignKey('users.id'), nullable=True, comment="승인한 관리자")
     approved_at = Column(DateTime, nullable=True, comment="승인 일시")
     
     # 역할 및 그룹 (직접 참조로 변경)
@@ -59,6 +59,9 @@ class User(Base):
     permissions = relationship("Permission", secondary=user_permissions, back_populates="users")
     features = relationship("Feature", secondary=user_features, back_populates="users")
     
+    # JWT Refresh Token 관계 (새로운 RefreshToken 테이블 사용)
+    refresh_tokens = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan")
+    
     # 서비스 관련 관계 추가 - 임시로 비활성화
     # services = relationship("Service", secondary="user_services", back_populates="users")
 
@@ -70,7 +73,7 @@ class Group(Base):
     description = Column(Text, nullable=True)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=func.now())
-    created_by = Column(CHAR(36), ForeignKey('users.id'), nullable=False)  # UUID로 변경
+    created_by = Column(UUID(as_uuid=True), ForeignKey('users.id'), nullable=True)  # nullable로 변경
     
     # 관계 정의 (1:N 관계로 변경)
     members = relationship("User", foreign_keys='User.group_id', back_populates="group")

@@ -20,8 +20,8 @@ from app.models import User
 
 # FastAPI 애플리케이션 생성
 app = FastAPI(
-    title="Jupyter Data Platform API",
-    description="데이터 분석을 위한 클라우드 플랫폼 API",
+    title="MAI-X",
+    description="종합 AI 및 데이터분석 플랫폼",
     version="2.0.0"
 )
 

@@ -20,7 +20,7 @@ export const AuthProvider = ({ children }) => {
     if (token) {
       // TODO: 토큰 검증 API 호출
       setUser({ 
-        id: 1, 
+        id: '4d8ab9f7-25df-498b-a321-c217df1f181c', 
         username: 'testuser', 
         email: 'test@example.com' 
       })

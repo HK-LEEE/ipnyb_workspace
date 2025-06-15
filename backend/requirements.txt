@@ -6,8 +6,9 @@ python-dotenv==1.0.0
 
 # 데이터베이스
 sqlalchemy==2.0.25
-pymysql==1.1.0
-pyodbc==4.0.39
+# pymysql==1.1.0  # MySQL 지원 (주석 처리)
+# pyodbc==4.0.39  # MSSQL 지원 (주석 처리)
+psycopg2-binary==2.9.9  # PostgreSQL 지원 추가
 
 # 보안 및 인증
 cryptography==41.0.7
@@ -38,13 +39,14 @@ openai==1.35.0
 anthropic==0.25.0
 google-generativeai==0.5.4
 
-# 로컬 LLM 지원
-gpt4all==2.5.4
+# 로컬 LLM 지원 (사용 가능한 최신 버전으로 수정)
+gpt4all==2.8.2
 
 # 네트워킹 및 HTTP
 aiohttp==3.9.5
 requests==2.31.0
 websockets==12.0
+httpx==0.25.2
 
 # 템플릿 엔진
 jinja2==3.1.2
@@ -53,4 +55,20 @@ jinja2==3.1.2
 langflow==1.0.12
 langflow-base==0.0.84
 langchain==0.1.20
-langflow-nightly==1.0.0a52 
+langflow-nightly==1.0.0a52
+
+# 새로 추가: LLMOps 관련 라이브러리 (호환성 수정)
+chromadb==0.4.24
+sentence-transformers==2.2.2
+transformers==4.36.2
+huggingface-hub==0.20.3
+tokenizers>=0.21.0,<0.22.0
+
+# OCR 관련 의존성
+pytesseract==0.3.10
+Pillow==10.0.1
+pdf2image==1.16.3
+
+# LLMOps Flow Provider 관련 의존성
+cachetools==5.3.2
+psutil==5.9.6 

@@ -104,7 +104,7 @@ const RegisterPage = () => {
                   <span className="text-white text-xl font-bold">G</span>
                 </div>
                 <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
-                  Genba X
+                  MAI-X
                 </h1>
               </Link>
             </div>
@@ -121,7 +121,7 @@ const RegisterPage = () => {
                   회원가입
                 </h2>
                 <p className="text-gray-600">
-                  Genba X 플랫폼에 가입하세요
+                  MAI-X 플랫폼에 가입하세요
                 </p>
               </div>
 

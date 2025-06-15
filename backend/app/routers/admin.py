@@ -69,16 +69,40 @@ class FeatureResponse(BaseModel):
     name: str
     display_name: str
     description: Optional[str] = None
-    category: str
+    category_id: Optional[int] = None
     icon: Optional[str] = None
     url_path: Optional[str] = None
     is_external: bool = False
     open_in_new_tab: bool = False
     is_active: bool
     requires_approval: bool
+    sort_order: int = 0
+    
+    # 카테고리 정보 (읽기 전용)
+    category_name: Optional[str] = None
+    category_display_name: Optional[str] = None
 
     class Config:
         from_attributes = True
+
+def create_feature_response(feature):
+    """Feature 모델을 FeatureResponse로 변환하는 헬퍼 함수"""
+    return FeatureResponse(
+        id=feature.id,
+        name=feature.name,
+        display_name=feature.display_name,
+        description=feature.description,
+        category_id=feature.category_id,
+        icon=feature.icon,
+        url_path=feature.url_path,
+        is_external=feature.is_external,
+        open_in_new_tab=feature.open_in_new_tab,
+        is_active=feature.is_active,
+        requires_approval=feature.requires_approval,
+        sort_order=feature.sort_order or 0,
+        category_name=feature.feature_category.name if feature.feature_category else None,
+        category_display_name=feature.feature_category.display_name if feature.feature_category else None
+    )
 
 class RoleResponse(BaseModel):
     id: int
@@ -156,24 +180,26 @@ class FeatureCreateRequest(BaseModel):
     name: str
     display_name: str
     description: str = ""
-    category: str
+    category_id: Optional[int] = None
     icon: str = ""
     url_path: str = ""
     is_external: bool = False
     open_in_new_tab: bool = False
     requires_approval: bool = False
     is_active: bool = True
+    sort_order: int = 0
 
 class FeatureUpdateRequest(BaseModel):
     display_name: str
     description: str = ""
-    category: str
+    category_id: Optional[int] = None
     icon: str = ""
     url_path: str = ""
     is_external: bool = False
     open_in_new_tab: bool = False
     requires_approval: bool = False
     is_active: bool = True
+    sort_order: int = 0
 
 class RoleCreateRequest(BaseModel):
     name: str
@@ -298,7 +324,7 @@ async def get_users(
             }
         
         result.append(UserListResponse(
-            id=user.id,
+            id=str(user.id),
             real_name=user.real_name,
             display_name=user.display_name,
             email=user.email,
@@ -331,10 +357,10 @@ async def get_user_detail(
     """사용자 상세 정보 조회"""
     user = db.query(User).options(
         joinedload(User.role).joinedload(Role.permissions),
-        joinedload(User.role).joinedload(Role.features),
+        joinedload(User.role).joinedload(Role.features).joinedload(Feature.feature_category),
         joinedload(User.group),
         joinedload(User.permissions),
-        joinedload(User.features),
+        joinedload(User.features).joinedload(Feature.feature_category),
         joinedload(User.approver)
     ).filter(User.id == user_id).first()
     
@@ -353,7 +379,7 @@ async def get_user_detail(
             description=user.role.description or "",
             is_active=user.role.is_active,
             permissions=[PermissionResponse.from_orm(p) for p in user.role.permissions],
-            features=[FeatureResponse.from_orm(f) for f in user.role.features],
+            features=[create_feature_response(f) for f in user.role.features],
             users_count=len(user.role.users)
         )
     
@@ -369,7 +395,7 @@ async def get_user_detail(
     print(f"사용자 상세 정보 조회 - 그룹ID: {user.group_id}, Bio: {user.bio}")
     
     response = UserDetailResponse(
-        id=user.id,
+        id=str(user.id),
         real_name=user.real_name,
         display_name=user.display_name or "",
         email=user.email,
@@ -389,7 +415,7 @@ async def get_user_detail(
         role=role_info,
         group=group_info,
         permissions=[PermissionResponse.from_orm(p) for p in user.permissions],
-        features=[FeatureResponse.from_orm(f) for f in user.features]
+        features=[create_feature_response(f) for f in user.features]
     )
     
     print(f"응답 데이터 - 그룹: {group_info}, Bio: {response.bio}")
@@ -516,8 +542,31 @@ async def get_features(
     current_admin: User = Depends(get_current_admin_user)
 ):
     """모든 기능 목록 조회"""
-    features = db.query(Feature).filter(Feature.is_active == True).all()
-    return [FeatureResponse.from_orm(f) for f in features]
+    features = db.query(Feature).options(
+        joinedload(Feature.feature_category)
+    ).filter(Feature.is_active == True).all()
+    
+    result = []
+    for feature in features:
+        feature_data = FeatureResponse(
+            id=feature.id,
+            name=feature.name,
+            display_name=feature.display_name,
+            description=feature.description,
+            category_id=feature.category_id,
+            icon=feature.icon,
+            url_path=feature.url_path,
+            is_external=feature.is_external,
+            open_in_new_tab=feature.open_in_new_tab,
+            is_active=feature.is_active,
+            requires_approval=feature.requires_approval,
+            sort_order=feature.sort_order or 0,
+            category_name=feature.feature_category.name if feature.feature_category else None,
+            category_display_name=feature.feature_category.display_name if feature.feature_category else None
+        )
+        result.append(feature_data)
+    
+    return result
 
 # 모든 역할 목록 조회
 @router.get("/roles", response_model=List[RoleResponse])
@@ -528,19 +577,39 @@ async def get_roles(
     """모든 역할 목록 조회"""
     roles = db.query(Role).options(
         joinedload(Role.permissions),
-        joinedload(Role.features),
+        joinedload(Role.features).joinedload(Feature.feature_category),
         joinedload(Role.users)
     ).filter(Role.is_active == True).all()
     
     result = []
     for role in roles:
+        # Feature 정보를 수동으로 구성
+        feature_responses = []
+        for feature in role.features:
+            feature_responses.append(FeatureResponse(
+                id=feature.id,
+                name=feature.name,
+                display_name=feature.display_name,
+                description=feature.description,
+                category_id=feature.category_id,
+                icon=feature.icon,
+                url_path=feature.url_path,
+                is_external=feature.is_external,
+                open_in_new_tab=feature.open_in_new_tab,
+                is_active=feature.is_active,
+                requires_approval=feature.requires_approval,
+                sort_order=feature.sort_order or 0,
+                category_name=feature.feature_category.name if feature.feature_category else None,
+                category_display_name=feature.feature_category.display_name if feature.feature_category else None
+            ))
+        
         result.append(RoleResponse(
             id=role.id,
             name=role.name,
             description=role.description or "",
             is_active=role.is_active,
             permissions=[PermissionResponse.from_orm(p) for p in role.permissions],
-            features=[FeatureResponse.from_orm(f) for f in role.features],
+            features=feature_responses,
             users_count=len(role.users)
         ))
     
@@ -609,7 +678,7 @@ async def initialize_basic_data(
     # motherpage 기반 기능 생성
     motherpage_features = [
         {"name": "dashboard", "display_name": "대시보드", "description": "메인 대시보드", "category": "core", "icon": "📊", "url_path": "/dashboard", "requires_approval": False},
-        {"name": "jupyter_workspace", "display_name": "쥬피터 워크스페이스", "description": "데이터 분석을 위한 쥬피터 노트북 환경", "category": "analysis", "icon": "📓", "url_path": "/workspace", "requires_approval": True},
+        {"name": "jupyter_workspace", "display_name": "쥬피터 워크스페이스", "description": "데이터 분석을 위한 쥬피터 노트북 환경", "category": "analysis", "icon": "📓", "url_path": "/workspaces", "requires_approval": False},
         {"name": "apex", "display_name": "APEX", "description": "공정분석 시스템", "category": "analysis", "icon": "🏭", "url_path": "/apex", "requires_approval": True},
         {"name": "llm_chat", "display_name": "AI 채팅", "description": "LLM을 활용한 AI 채팅", "category": "ai", "icon": "🤖", "url_path": "/llm", "requires_approval": True},
         {"name": "admin_tools", "display_name": "관리 도구", "description": "시스템 관리 도구", "category": "admin", "icon": "⚙️", "url_path": "/admin", "requires_approval": False},
@@ -849,20 +918,41 @@ async def create_feature(
         name=request.name,
         display_name=request.display_name,
         description=request.description,
-        category=request.category,
+        category_id=request.category_id,
         icon=request.icon,
         url_path=request.url_path,
         is_external=request.is_external,
         open_in_new_tab=request.open_in_new_tab,
         requires_approval=request.requires_approval,
-        is_active=request.is_active
+        is_active=request.is_active,
+        sort_order=request.sort_order
     )
     
     db.add(feature)
     db.commit()
     db.refresh(feature)
     
-    return FeatureResponse.from_orm(feature)
+    # 카테고리 정보와 함께 응답
+    feature = db.query(Feature).options(
+        joinedload(Feature.feature_category)
+    ).filter(Feature.id == feature.id).first()
+    
+    return FeatureResponse(
+        id=feature.id,
+        name=feature.name,
+        display_name=feature.display_name,
+        description=feature.description,
+        category_id=feature.category_id,
+        icon=feature.icon,
+        url_path=feature.url_path,
+        is_external=feature.is_external,
+        open_in_new_tab=feature.open_in_new_tab,
+        is_active=feature.is_active,
+        requires_approval=feature.requires_approval,
+        sort_order=feature.sort_order or 0,
+        category_name=feature.feature_category.name if feature.feature_category else None,
+        category_display_name=feature.feature_category.display_name if feature.feature_category else None
+    )
 
 @router.put("/features/{feature_id}", response_model=FeatureResponse)
 async def update_feature(
@@ -881,18 +971,38 @@ async def update_feature(
     
     feature.display_name = request.display_name
     feature.description = request.description
-    feature.category = request.category
+    feature.category_id = request.category_id
     feature.icon = request.icon
     feature.url_path = request.url_path
     feature.is_external = request.is_external
     feature.open_in_new_tab = request.open_in_new_tab
     feature.requires_approval = request.requires_approval
     feature.is_active = request.is_active
+    feature.sort_order = request.sort_order
     
     db.commit()
-    db.refresh(feature)
     
-    return FeatureResponse.from_orm(feature)
+    # 카테고리 정보와 함께 응답
+    feature = db.query(Feature).options(
+        joinedload(Feature.feature_category)
+    ).filter(Feature.id == feature_id).first()
+    
+    return FeatureResponse(
+        id=feature.id,
+        name=feature.name,
+        display_name=feature.display_name,
+        description=feature.description,
+        category_id=feature.category_id,
+        icon=feature.icon,
+        url_path=feature.url_path,
+        is_external=feature.is_external,
+        open_in_new_tab=feature.open_in_new_tab,
+        is_active=feature.is_active,
+        requires_approval=feature.requires_approval,
+        sort_order=feature.sort_order or 0,
+        category_name=feature.feature_category.name if feature.feature_category else None,
+        category_display_name=feature.feature_category.display_name if feature.feature_category else None
+    )
 
 @router.delete("/features/{feature_id}")
 async def delete_feature(
@@ -981,7 +1091,7 @@ async def update_role(
         description=role.description or "",
         is_active=role.is_active,
         permissions=[PermissionResponse.from_orm(p) for p in role.permissions],
-        features=[FeatureResponse.from_orm(f) for f in role.features],
+                    features=[create_feature_response(f) for f in role.features],
         users_count=len(role.users)
     )
 
@@ -1063,12 +1173,32 @@ async def get_groups(
     groups = db.query(Group).options(
         joinedload(Group.members),
         joinedload(Group.permissions),
-        joinedload(Group.features),
+        joinedload(Group.features).joinedload(Feature.feature_category),
         joinedload(Group.creator)
     ).all()
     
     result = []
     for group in groups:
+        # Feature 정보를 수동으로 구성
+        feature_responses = []
+        for feature in group.features:
+            feature_responses.append(FeatureResponse(
+                id=feature.id,
+                name=feature.name,
+                display_name=feature.display_name,
+                description=feature.description,
+                category_id=feature.category_id,
+                icon=feature.icon,
+                url_path=feature.url_path,
+                is_external=feature.is_external,
+                open_in_new_tab=feature.open_in_new_tab,
+                is_active=feature.is_active,
+                requires_approval=feature.requires_approval,
+                sort_order=feature.sort_order or 0,
+                category_name=feature.feature_category.name if feature.feature_category else None,
+                category_display_name=feature.feature_category.display_name if feature.feature_category else None
+            ))
+        
         result.append(GroupDetailResponse(
             id=group.id,
             name=group.name,
@@ -1078,7 +1208,7 @@ async def get_groups(
             users_count=len(group.members),
             users=[],  # 목록에서는 사용자 정보는 제외
             permissions=[PermissionResponse.from_orm(p) for p in group.permissions],
-            features=[FeatureResponse.from_orm(f) for f in group.features]
+            features=feature_responses
         ))
     
     return result
@@ -1093,7 +1223,7 @@ async def get_group_detail(
     group = db.query(Group).options(
         joinedload(Group.members).joinedload(User.role),
         joinedload(Group.permissions),
-        joinedload(Group.features),
+        joinedload(Group.features).joinedload(Feature.feature_category),
         joinedload(Group.creator)
     ).filter(Group.id == group_id).first()
     
@@ -1111,7 +1241,7 @@ async def get_group_detail(
         created_at=group.created_at,
         users_count=len(group.members),
         users=[GroupUserResponse(
-            id=user.id,
+            id=str(user.id),
             real_name=user.real_name,
             display_name=user.display_name,
             email=user.email,
@@ -1128,7 +1258,7 @@ async def get_group_detail(
             role_name=user.role.name if user.role else None
         ) for user in group.members],
         permissions=[PermissionResponse.from_orm(p) for p in group.permissions],
-        features=[FeatureResponse.from_orm(f) for f in group.features]
+        features=[create_feature_response(f) for f in group.features]
     )
 
 @router.post("/groups", response_model=GroupDetailResponse)
@@ -1178,7 +1308,7 @@ async def update_group(
     group = db.query(Group).options(
         joinedload(Group.members).joinedload(User.role),
         joinedload(Group.permissions),
-        joinedload(Group.features),
+        joinedload(Group.features).joinedload(Feature.feature_category),
         joinedload(Group.creator)
     ).filter(Group.id == group_id).first()
     
@@ -1210,7 +1340,7 @@ async def update_group(
         created_at=group.created_at,
         users_count=len(group.members),
         users=[GroupUserResponse(
-            id=user.id,
+            id=str(user.id),
             real_name=user.real_name,
             display_name=user.display_name,
             email=user.email,
@@ -1227,7 +1357,7 @@ async def update_group(
             role_name=user.role.name if user.role else None
         ) for user in group.members],
         permissions=[PermissionResponse.from_orm(p) for p in group.permissions],
-        features=[FeatureResponse.from_orm(f) for f in group.features]
+        features=[create_feature_response(f) for f in group.features]
     )
 
 @router.delete("/groups/{group_id}")

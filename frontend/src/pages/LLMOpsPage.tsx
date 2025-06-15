@@ -36,9 +36,7 @@ const LLMOpsPage: React.FC = () => {
   // LLMOps 상태 확인
   const checkStatus = async () => {
     try {
-      const response = await fetch('http://localhost:8000/api/llmops/status', {
-        headers: getHeaders(),
-      });
+      const response = await fetch('http://localhost:8000/api/llmops/status');
       
       if (response.ok) {
         const data = await response.json();
@@ -60,7 +58,6 @@ const LLMOpsPage: React.FC = () => {
     try {
       const response = await fetch('http://localhost:8000/api/llmops/start', {
         method: 'POST',
-        headers: getHeaders(),
       });
       
       if (response.ok) {
@@ -89,7 +86,6 @@ const LLMOpsPage: React.FC = () => {
     try {
       const response = await fetch('http://localhost:8000/api/llmops/stop', {
         method: 'POST',
-        headers: getHeaders(),
       });
       
       if (response.ok) {
@@ -115,7 +111,15 @@ const LLMOpsPage: React.FC = () => {
       
       if (response.ok) {
         const data = await response.json();
-        setFlows(data.flows);
+        setFlows(Array.isArray(data) ? data : []);
+      } else if (response.status === 401) {
+        // 토큰 만료 처리
+        console.warn('토큰이 만료되었습니다. 로그인이 필요합니다.');
+        setError('로그인이 필요합니다. 다시 로그인해주세요.');
+        // 자동으로 로그인 페이지로 이동
+        setTimeout(() => {
+          handleLogout();
+        }, 2000);
       } else {
         throw new Error('플로우 목록 조회 실패');
       }

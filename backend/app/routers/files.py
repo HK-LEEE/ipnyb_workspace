@@ -28,13 +28,26 @@ async def list_files(
             detail="Workspace not found"
         )
     
+    # 워크스페이스 경로가 None이면 디렉토리 생성
+    if not workspace.path:
+        from ..utils.workspace import create_workspace_directory
+        workspace_path = create_workspace_directory(current_user.id, workspace.id)
+        # 데이터베이스 업데이트
+        workspace.path = workspace_path
+        db.commit()
+        db.refresh(workspace)
+    
     target_path = os.path.join(workspace.path, path) if path else workspace.path
     
+    # 경로가 존재하지 않으면 생성
     if not os.path.exists(target_path):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Path not found"
-        )
+        try:
+            os.makedirs(target_path, exist_ok=True)
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to create directory: {str(e)}"
+            )
     
     files = []
     for item in os.listdir(target_path):
@@ -69,13 +82,26 @@ async def upload_file(
             detail="Workspace not found"
         )
     
+    # 워크스페이스 경로가 None이면 디렉토리 생성
+    if not workspace.path:
+        from ..utils.workspace import create_workspace_directory
+        workspace_path = create_workspace_directory(current_user.id, workspace.id)
+        # 데이터베이스 업데이트
+        workspace.path = workspace_path
+        db.commit()
+        db.refresh(workspace)
+    
     upload_path = os.path.join(workspace.path, path) if path else workspace.path
     
+    # 경로가 존재하지 않으면 생성
     if not os.path.exists(upload_path):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Upload path not found"
-        )
+        try:
+            os.makedirs(upload_path, exist_ok=True)
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to create upload directory: {str(e)}"
+            )
     
     uploaded_files = []
     
@@ -118,6 +144,14 @@ async def download_file(
             detail="Workspace not found"
         )
     
+    # 워크스페이스 경로가 None이면 디렉토리 생성
+    if not workspace.path:
+        from ..utils.workspace import create_workspace_directory
+        workspace_path = create_workspace_directory(current_user.id, workspace.id)
+        workspace.path = workspace_path
+        db.commit()
+        db.refresh(workspace)
+    
     full_path = os.path.join(workspace.path, file_path)
     
     if not os.path.exists(full_path) or os.path.isdir(full_path):
@@ -149,6 +183,14 @@ async def delete_file(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Workspace not found"
         )
+    
+    # 워크스페이스 경로가 None이면 디렉토리 생성
+    if not workspace.path:
+        from ..utils.workspace import create_workspace_directory
+        workspace_path = create_workspace_directory(current_user.id, workspace.id)
+        workspace.path = workspace_path
+        db.commit()
+        db.refresh(workspace)
     
     full_path = os.path.join(workspace.path, file_path)
     
@@ -191,7 +233,26 @@ async def create_folder(
             detail="Workspace not found"
         )
     
+    # 워크스페이스 경로가 None이면 디렉토리 생성
+    if not workspace.path:
+        from ..utils.workspace import create_workspace_directory
+        workspace_path = create_workspace_directory(current_user.id, workspace.id)
+        workspace.path = workspace_path
+        db.commit()
+        db.refresh(workspace)
+    
     parent_path = os.path.join(workspace.path, path) if path else workspace.path
+    
+    # 부모 경로가 존재하지 않으면 생성
+    if not os.path.exists(parent_path):
+        try:
+            os.makedirs(parent_path, exist_ok=True)
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to create parent directory: {str(e)}"
+            )
+    
     folder_path = os.path.join(parent_path, folder_name)
     
     if os.path.exists(folder_path):

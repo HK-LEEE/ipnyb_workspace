@@ -9,14 +9,18 @@ class Settings(BaseSettings):
     model_config = ConfigDict(env_file=".env", extra="allow")
     
     # 데이터베이스 타입 및 연결 설정
-    database_type: str = os.getenv("DATABASE_TYPE", "mysql")  # mysql 또는 mssql
+    database_type: str = os.getenv("DATABASE_TYPE", "postgresql")  # postgresql, mysql, mssql
+    database_url: str = os.getenv("DATABASE_URL", "postgresql://postgres:2300@localhost:5432/platform_integration")
+    
+    # Legacy 호환성 - 기존 설정들은 유지
     mysql_database_url: str = os.getenv("MYSQL_DATABASE_URL", "mysql+pymysql://test:test@localhost:3306/jupyter_platform")
     mssql_database_url: str = os.getenv("MSSQL_DATABASE_URL", "mssql+pyodbc://sa:password@localhost:1433/jupyter_platform?driver=ODBC+Driver+17+for+SQL+Server")
     
-    # Security
+    # Security & JWT Configuration
     secret_key: str = os.getenv("SECRET_KEY", "your-secret-key-here")
     algorithm: str = os.getenv("ALGORITHM", "HS256")
     access_token_expire_minutes: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
+    refresh_token_expire_days: int = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "7"))
     
     # Jupyter
     jupyter_base_url: str = os.getenv("JUPYTER_BASE_URL", "http://localhost")
@@ -67,23 +71,15 @@ class Settings(BaseSettings):
     ai_max_chat_history: int = int(os.getenv("AI_MAX_CHAT_HISTORY", "10"))
     ai_enabled_features: str = os.getenv("AI_ENABLED_FEATURES", "chat,completion,learn")
     
-    @property
-    def database_url(self) -> str:
-        """데이터베이스 타입에 따라 적절한 URL 반환"""
-        if self.database_type.lower() == "mysql":
-            return self.mysql_database_url
-        elif self.database_type.lower() == "mssql":
-            return self.mssql_database_url
-        else:
-            # 기본값은 MySQL
-            return self.mysql_database_url
-    
-    def get_workspace_path(self, user_id: str, workspace_id: int = None) -> str:
+    def get_workspace_path(self, user_id, workspace_id: int = None) -> str:
         """워크스페이스 경로 생성 - data/users/{user_id}/{workspace_id} 형태"""
+        # UUID 객체를 문자열로 변환
+        user_id_str = str(user_id)
+        
         if workspace_id is not None:
-            return os.path.join(self.users_dir, user_id, str(workspace_id))
+            return os.path.join(self.users_dir, user_id_str, str(workspace_id))
         else:
             # 호환성을 위해 workspace_id가 없으면 기본 사용자 폴더 반환
-            return os.path.join(self.users_dir, user_id)
+            return os.path.join(self.users_dir, user_id_str)
 
 settings = Settings() 

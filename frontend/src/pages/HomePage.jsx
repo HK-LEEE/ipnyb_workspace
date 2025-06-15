@@ -12,7 +12,7 @@ const HomePage = () => {
             <div className="flex items-center">
               <BookOpenIcon className="h-8 w-8 text-indigo-600" />
               <h1 className="ml-3 text-2xl font-bold text-gray-900">
-                Jupyter Data Platform
+                Manufacturing AI & DX
               </h1>
             </div>
             <div className="flex space-x-4">

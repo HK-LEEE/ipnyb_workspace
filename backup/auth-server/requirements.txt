@@ -1,0 +1,73 @@
+# FastAPI and core dependencies
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+python-multipart==0.0.6
+python-dotenv==1.0.0
+
+# Database
+sqlalchemy==2.0.25
+psycopg2-binary==2.9.7
+asyncpg==0.28.0
+
+# Security and Authentication (OAuth 2.0 + JWT)
+cryptography==41.0.7
+passlib[bcrypt]==1.7.4
+bcrypt==4.1.2
+python-jose[cryptography]==3.3.0
+pydantic[email]==2.5.0
+
+# HTTP client for external API calls
+httpx==0.24.1
+aiohttp==3.9.5
+requests==2.31.0
+
+# Rate limiting
+slowapi==0.1.9
+
+# System monitoring
+psutil==5.9.6
+
+# Jupyter core (compatible versions)
+jupyterlab==4.0.9
+jupyter-server==2.10.1
+jupyter-client==8.6.0
+ipykernel==6.26.0
+notebook==7.0.6
+
+# Jupyter AI and LLM support
+jupyter-ai==2.25.0
+langchain-core==0.1.52
+langchain-openai==0.1.8
+langchain-anthropic==0.1.11
+langchain-google-genai==1.0.6
+
+# AI providers
+openai==1.35.0
+anthropic==0.25.0
+google-generativeai==0.5.4
+
+# Local LLM support
+gpt4all==2.5.4
+
+# Networking and WebSockets
+websockets==12.0
+
+# Template engine
+jinja2==3.1.2
+
+# LLMOps Platform
+langflow==1.0.12
+langflow-base==0.0.84
+langchain==0.1.20
+
+# File handling
+python-magic==0.4.27
+pillow==10.0.1
+
+# Additional utilities
+python-dateutil==2.8.2
+pytz==2023.3
+
+# Development tools
+pytest==7.4.0
+pytest-asyncio==0.21.1 
