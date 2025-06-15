@@ -4,7 +4,9 @@ import {
   Users, Settings, Shield, Database, UserPlus, UserCheck, UserX, 
   Edit3, Trash2, Download, Upload, Search, RefreshCw, Plus,
   ChevronRight, AlertCircle, CheckCircle, XCircle, Clock,
-  Eye, EyeOff, Key, Filter, Grid, List, MoreVertical
+  Eye, EyeOff, Key, Filter, Grid, List, MoreVertical,
+  ArrowRight, ArrowLeft, User, Phone, Building, Briefcase,
+  Calendar, Activity, Mail, MapPin
 } from 'lucide-react';
 
 interface User {
@@ -71,12 +73,26 @@ interface Feature {
   display_name: string;
   description: string;
   category: string;
+  category_id?: number;
   icon: string;
   url_path: string;
   is_active: boolean;
   requires_approval: boolean;
   is_external?: boolean;
   open_in_new_tab?: boolean;
+  category_name?: string;
+  category_display_name?: string;
+}
+
+interface FeatureCategory {
+  id: number;
+  name: string;
+  display_name: string;
+  description?: string;
+  icon?: string;
+  color?: string;
+  sort_order: number;
+  is_active: boolean;
 }
 
 const AdminPage: React.FC = () => {
@@ -85,6 +101,7 @@ const AdminPage: React.FC = () => {
   const [users, setUsers] = useState<User[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
   const [features, setFeatures] = useState<Feature[]>([]);
+  const [featureCategories, setFeatureCategories] = useState<FeatureCategory[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterStatus, setFilterStatus] = useState<'all' | 'active' | 'inactive' | 'pending'>('all');
@@ -113,7 +130,7 @@ const AdminPage: React.FC = () => {
     name: '',
     display_name: '',
     description: '',
-    category: '',
+    category_id: null as number | null,
     icon: '',
     url_path: '',
     is_active: true,
@@ -130,6 +147,9 @@ const AdminPage: React.FC = () => {
   });
   const [selectedGroupFeatures, setSelectedGroupFeatures] = useState<number[]>([]);
   const [availableFeatures, setAvailableFeatures] = useState<Feature[]>([]);
+  const [unassignedFeatures, setUnassignedFeatures] = useState<Feature[]>([]);
+  const [assignedFeatures, setAssignedFeatures] = useState<Feature[]>([]);
+  const [groupUsers, setGroupUsers] = useState<GroupUser[]>([]);
   
   // 새로운 사용자 추가를 위한 상태
   const [showAddUserModal, setShowAddUserModal] = useState(false);
@@ -159,10 +179,11 @@ const AdminPage: React.FC = () => {
   const fetchData = async () => {
     try {
       const token = localStorage.getItem('token');
-      const [usersRes, groupsRes, featuresRes] = await Promise.all([
+      const [usersRes, groupsRes, featuresRes, categoriesRes] = await Promise.all([
         fetch('/admin/users', { headers: { Authorization: `Bearer ${token}` } }),
         fetch('/admin/groups', { headers: { Authorization: `Bearer ${token}` } }),
-        fetch('/admin/features', { headers: { Authorization: `Bearer ${token}` } })
+        fetch('/admin/features', { headers: { Authorization: `Bearer ${token}` } }),
+        fetch('/admin/feature-categories', { headers: { Authorization: `Bearer ${token}` } })
       ]);
 
       if (usersRes.ok) {
@@ -179,6 +200,11 @@ const AdminPage: React.FC = () => {
         const featuresData = await featuresRes.json();
         setFeatures(featuresData);
         setAvailableFeatures(featuresData);
+      }
+
+      if (categoriesRes.ok) {
+        const categoriesData = await categoriesRes.json();
+        setFeatureCategories(categoriesData);
       }
     } catch (error) {
       console.error('데이터 로드 실패:', error);
@@ -201,18 +227,21 @@ const AdminPage: React.FC = () => {
       const token = localStorage.getItem('token');
       const response = await fetch(`/admin/users/${userId}`, {
         method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` }
+        headers: { 
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
       });
 
       if (response.ok) {
-        alert('사용자가 성공적으로 삭제되었습니다.');
-        fetchData();
+        await fetchData();
+        alert('사용자가 삭제되었습니다.');
       } else {
-        const errorData = await response.json();
-        alert(`사용자 삭제 실패: ${errorData.detail || '알 수 없는 오류'}`);
+        const error = await response.json();
+        alert(`사용자 삭제 실패: ${error.detail || '알 수 없는 오류'}`);
       }
     } catch (error) {
-      console.error('사용자 삭제 중 오류:', error);
+      console.error('사용자 삭제 실패:', error);
       alert('사용자 삭제 중 오류가 발생했습니다.');
     }
   };
@@ -220,7 +249,7 @@ const AdminPage: React.FC = () => {
   const openUserModal = async (user: User) => {
     setSelectedUser(user);
     setEditedUserInfo({
-      real_name: user.real_name || '',
+      real_name: user.real_name,
       display_name: user.display_name || '',
       phone_number: user.phone_number || '',
       department: user.department || '',
@@ -228,19 +257,21 @@ const AdminPage: React.FC = () => {
       bio: user.bio || ''
     });
     setSelectedGroupId(user.group?.id || null);
+    // 바로 편집 모드로 시작
+    setIsEditingUserInfo(true);
     setShowUserModal(true);
   };
 
   const saveUserInfo = async () => {
     if (!selectedUser) return;
-
+    
     try {
       const token = localStorage.getItem('token');
       const response = await fetch(`/admin/users/${selectedUser.id}`, {
         method: 'PUT',
         headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify({
           ...editedUserInfo,
@@ -249,16 +280,16 @@ const AdminPage: React.FC = () => {
       });
 
       if (response.ok) {
-        alert('사용자 정보가 성공적으로 업데이트되었습니다.');
+        await fetchData();
         setShowUserModal(false);
         setIsEditingUserInfo(false);
-        fetchData();
+        alert('사용자 정보가 업데이트되었습니다.');
       } else {
-        const errorData = await response.json();
-        alert(`업데이트 실패: ${errorData.detail || '알 수 없는 오류'}`);
+        const error = await response.json();
+        alert(`업데이트 실패: ${error.detail || '알 수 없는 오류'}`);
       }
     } catch (error) {
-      console.error('사용자 정보 업데이트 중 오류:', error);
+      console.error('사용자 정보 업데이트 실패:', error);
       alert('사용자 정보 업데이트 중 오류가 발생했습니다.');
     }
   };
@@ -269,8 +300,8 @@ const AdminPage: React.FC = () => {
       const response = await fetch(`/admin/users/${userId}/status`, {
         method: 'PUT',
         headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify({
           approval_status: status,
@@ -279,21 +310,17 @@ const AdminPage: React.FC = () => {
       });
 
       if (response.ok) {
-        alert('사용자 상태가 성공적으로 업데이트되었습니다.');
-        fetchData();
+        await fetchData();
+        alert('사용자 상태가 업데이트되었습니다.');
       } else {
-        const errorData = await response.json();
-        alert(`상태 업데이트 실패: ${errorData.detail || '알 수 없는 오류'}`);
+        const error = await response.json();
+        alert(`상태 업데이트 실패: ${error.detail || '알 수 없는 오류'}`);
       }
     } catch (error) {
-      console.error('사용자 상태 업데이트 중 오류:', error);
+      console.error('사용자 상태 업데이트 실패:', error);
       alert('사용자 상태 업데이트 중 오류가 발생했습니다.');
     }
   };
-
-  // ===========================================
-  // 사용자 추가 기능
-  // ===========================================
 
   const openAddUserModal = () => {
     setNewUserInfo({
@@ -313,81 +340,72 @@ const AdminPage: React.FC = () => {
 
   const createUser = async () => {
     if (!newUserInfo.real_name || !newUserInfo.email || !newUserInfo.password) {
-      alert('실명, 이메일, 비밀번호는 필수 입력 항목입니다.');
+      alert('필수 항목을 모두 입력해주세요.');
+      return;
+    }
+
+    if (newUserInfo.password.length < 6) {
+      alert('비밀번호는 최소 6자 이상이어야 합니다.');
       return;
     }
 
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch('/api/auth/register', {
+      
+      // 먼저 사용자 생성
+      const registerResponse = await fetch('/api/auth/register', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify({
           real_name: newUserInfo.real_name,
           display_name: newUserInfo.display_name,
           email: newUserInfo.email,
-          password: newUserInfo.password,
           phone_number: newUserInfo.phone_number,
           department: newUserInfo.department,
           position: newUserInfo.position,
-          bio: newUserInfo.bio
+          bio: newUserInfo.bio,
+          password: newUserInfo.password,
+          is_admin: newUserInfo.is_admin
         })
       });
 
-      if (response.ok) {
-        const userData = await response.json();
-        let successMessage = '사용자가 성공적으로 생성되었습니다.';
+      if (registerResponse.ok) {
+        const userData = await registerResponse.json();
         
-        // 관리자 권한 설정 (필요한 경우)
-        if (newUserInfo.is_admin) {
-          try {
-            // 여기에 관리자 권한 설정 API 호출이 필요할 수 있습니다
-            // 현재는 백엔드에서 해당 API가 없으므로 스킵
-          } catch (error) {
-            console.warn('관리자 권한 설정 실패:', error);
-          }
-        }
-        
-        // 그룹 설정 (필요한 경우)
+        // 그룹이 선택되었다면 그룹 할당
         if (newUserInfo.group_id) {
-          try {
-            await fetch('/admin/users/group', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${token}`
-              },
-              body: JSON.stringify({
-                user_id: userData.user?.id || userData.id,
-                group_id: newUserInfo.group_id
-              })
-            });
-            successMessage += ' 그룹도 설정되었습니다.';
-          } catch (error) {
-            console.warn('그룹 설정 실패:', error);
-            successMessage += ' (그룹 설정은 실패했습니다)';
+          const groupResponse = await fetch('/admin/users/group', {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              user_id: userData.user.id,
+              group_id: newUserInfo.group_id
+            })
+          });
+
+          if (!groupResponse.ok) {
+            const groupError = await groupResponse.json();
+            console.error('그룹 할당 실패:', groupError);
           }
         }
-        
-        alert(successMessage);
+
+        await fetchData();
         setShowAddUserModal(false);
-        fetchData();
+        alert('새 사용자가 생성되었습니다.');
       } else {
-        const errorData = await response.json();
-        alert(`사용자 생성 실패: ${errorData.detail || '알 수 없는 오류'}`);
+        const error = await registerResponse.json();
+        alert(`사용자 생성 실패: ${error.detail || '알 수 없는 오류'}`);
       }
     } catch (error) {
-      console.error('사용자 생성 중 오류:', error);
+      console.error('사용자 생성 실패:', error);
       alert('사용자 생성 중 오류가 발생했습니다.');
     }
   };
-
-  // ===========================================
-  // 기능 관리 기능
-  // ===========================================
 
   const openFeatureModal = (feature: Feature | null = null) => {
     if (feature) {
@@ -395,10 +413,10 @@ const AdminPage: React.FC = () => {
       setEditedFeatureInfo({
         name: feature.name,
         display_name: feature.display_name,
-        description: feature.description,
-        category: feature.category,
-        icon: feature.icon,
-        url_path: feature.url_path,
+        description: feature.description || '',
+        category_id: feature.category_id || null,
+        icon: feature.icon || '',
+        url_path: feature.url_path || '',
         is_active: feature.is_active,
         requires_approval: feature.requires_approval,
         is_external: feature.is_external || false,
@@ -411,7 +429,7 @@ const AdminPage: React.FC = () => {
         name: '',
         display_name: '',
         description: '',
-        category: '',
+        category_id: null,
         icon: '',
         url_path: '',
         is_active: true,
@@ -421,12 +439,13 @@ const AdminPage: React.FC = () => {
       });
       setIsEditingFeature(false);
     }
+    setShowPreview(false);
     setShowFeatureModal(true);
   };
 
   const saveFeature = async () => {
     if (!editedFeatureInfo.name || !editedFeatureInfo.display_name) {
-      alert('기능명과 표시명은 필수 입력 항목입니다.');
+      alert('기능명과 표시명은 필수 항목입니다.');
       return;
     }
 
@@ -438,23 +457,23 @@ const AdminPage: React.FC = () => {
       const response = await fetch(url, {
         method,
         headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify(editedFeatureInfo)
       });
 
       if (response.ok) {
-        alert(`기능이 성공적으로 ${selectedFeature ? '수정' : '생성'}되었습니다.`);
+        await fetchData();
         setShowFeatureModal(false);
-        fetchData();
+        alert(selectedFeature ? '기능이 업데이트되었습니다.' : '새 기능이 생성되었습니다.');
       } else {
-        const errorData = await response.json();
-        alert(`기능 ${selectedFeature ? '수정' : '생성'} 실패: ${errorData.detail || '알 수 없는 오류'}`);
+        const error = await response.json();
+        alert(`기능 저장 실패: ${error.detail || '알 수 없는 오류'}`);
       }
     } catch (error) {
-      console.error(`기능 ${selectedFeature ? '수정' : '생성'} 중 오류:`, error);
-      alert(`기능 ${selectedFeature ? '수정' : '생성'} 중 오류가 발생했습니다.`);
+      console.error('기능 저장 실패:', error);
+      alert('기능 저장 중 오류가 발생했습니다.');
     }
   };
 
@@ -467,65 +486,69 @@ const AdminPage: React.FC = () => {
       const token = localStorage.getItem('token');
       const response = await fetch(`/admin/features/${featureId}`, {
         method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` }
+        headers: { 
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
       });
 
       if (response.ok) {
-        alert('기능이 성공적으로 삭제되었습니다.');
-        fetchData();
+        await fetchData();
+        alert('기능이 삭제되었습니다.');
       } else {
-        const errorData = await response.json();
-        alert(`기능 삭제 실패: ${errorData.detail || '알 수 없는 오류'}`);
+        const error = await response.json();
+        alert(`기능 삭제 실패: ${error.detail || '알 수 없는 오류'}`);
       }
     } catch (error) {
-      console.error('기능 삭제 중 오류:', error);
+      console.error('기능 삭제 실패:', error);
       alert('기능 삭제 중 오류가 발생했습니다.');
     }
   };
 
-  // ===========================================
-  // CSV 내보내기 기능
-  // ===========================================
-
   const exportUsersToCSV = () => {
-    const headers = ['실명', '이메일', '전화번호', '부서', '직책', '상태', '관리자', '그룹', '가입일'];
-    const csvData = [
-      headers,
-      ...filteredUsers.map(user => [
-        user.real_name,
-        user.email,
-        user.phone_number || '',
-        user.department || '',
-        user.position || '',
-        user.is_active ? '활성' : '비활성',
-        user.is_admin ? '예' : '아니오',
-        user.group?.name || '',
-        formatDate(user.created_at)
-      ])
-    ];
+    const headers = ['ID', '실명', '표시명', '이메일', '전화번호', '부서', '직급', 
+                     '활성화 상태', '관리자 여부', '승인 상태', '가입일', '마지막 로그인', '로그인 횟수'];
+    
+    const csvData = users.map(user => [
+      user.id,
+      user.real_name,
+      user.display_name || '',
+      user.email,
+      user.phone_number || '',
+      user.department || '',
+      user.position || '',
+      user.is_active ? '활성' : '비활성',
+      user.is_admin ? '관리자' : '일반',
+      user.approval_status === 'approved' ? '승인됨' : 
+      user.approval_status === 'rejected' ? '거부됨' : '대기중',
+      formatDate(user.created_at),
+      formatDate(user.last_login_at),
+      user.login_count
+    ]);
 
-    const csvContent = csvData.map(row => 
-      row.map(field => `"${field}"`).join(',')
-    ).join('\n');
+    const csvContent = [headers, ...csvData]
+      .map(row => row.map(cell => `"${cell}"`).join(','))
+      .join('\n');
 
-    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+    // UTF-8 BOM 추가로 한글 깨짐 방지
+    const BOM = '\uFEFF';
+    const blob = new Blob([BOM + csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    link.setAttribute('href', url);
-    link.setAttribute('download', `users_${new Date().toISOString().split('T')[0]}.csv`);
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    
+    if (link.download !== undefined) {
+      const url = URL.createObjectURL(blob);
+      link.setAttribute('href', url);
+      link.setAttribute('download', `users_${new Date().toISOString().split('T')[0]}.csv`);
+      link.style.visibility = 'hidden';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
   };
 
-  // ===========================================
-  // 비밀번호 재설정 기능
-  // ===========================================
-
   const resetPassword = async () => {
-    if (!passwordData.new_password) {
-      alert('새 비밀번호를 입력해주세요.');
+    if (!passwordData.user_id || !passwordData.new_password) {
+      alert('모든 필드를 입력해주세요.');
       return;
     }
 
@@ -539,8 +562,8 @@ const AdminPage: React.FC = () => {
       const response = await fetch('/admin/users/change-password', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify({
           user_id: passwordData.user_id,
@@ -549,48 +572,54 @@ const AdminPage: React.FC = () => {
       });
 
       if (response.ok) {
-        alert('비밀번호가 성공적으로 재설정되었습니다.');
+        alert('비밀번호가 성공적으로 변경되었습니다.');
         setShowPasswordModal(false);
-        setPasswordData({user_id: '', new_password: ''});
+        setPasswordData({ user_id: '', new_password: '' });
       } else {
-        const errorData = await response.json();
-        alert(`비밀번호 재설정 실패: ${errorData.detail || '알 수 없는 오류'}`);
+        const error = await response.json();
+        alert(`비밀번호 변경 실패: ${error.detail || '알 수 없는 오류'}`);
       }
     } catch (error) {
-      console.error('비밀번호 재설정 중 오류:', error);
-      alert('비밀번호 재설정 중 오류가 발생했습니다.');
+      console.error('비밀번호 변경 실패:', error);
+      alert('비밀번호 변경 중 오류가 발생했습니다.');
     }
   };
-
-  // ===========================================
-  // 그룹 관리 기능
-  // ===========================================
 
   const openGroupModal = async (group: Group | null = null) => {
     if (group) {
       setSelectedGroup(group);
       setEditedGroupInfo({
         name: group.name,
-        description: group.description
+        description: group.description || ''
       });
-      // 그룹의 기존 기능들을 선택된 상태로 설정
-      setSelectedGroupFeatures(group.features?.map(f => f.id) || []);
       setIsEditingGroup(true);
+      
+      // 그룹의 기능들을 assigned와 unassigned로 분리
+      const groupFeatureIds = group.features?.map(f => f.id) || [];
+      setAssignedFeatures(group.features || []);
+      setUnassignedFeatures(availableFeatures.filter(f => !groupFeatureIds.includes(f.id)));
+      setSelectedGroupFeatures(groupFeatureIds);
+      
+      // 그룹 사용자 정보 로드
+      setGroupUsers(group.users || []);
     } else {
       setSelectedGroup(null);
       setEditedGroupInfo({
         name: '',
         description: ''
       });
-      setSelectedGroupFeatures([]);
       setIsEditingGroup(false);
+      setAssignedFeatures([]);
+      setUnassignedFeatures(availableFeatures);
+      setSelectedGroupFeatures([]);
+      setGroupUsers([]);
     }
     setShowGroupModal(true);
   };
 
   const saveGroup = async () => {
     if (!editedGroupInfo.name) {
-      alert('그룹명은 필수 입력 항목입니다.');
+      alert('그룹명은 필수 항목입니다.');
       return;
     }
 
@@ -602,45 +631,40 @@ const AdminPage: React.FC = () => {
       const response = await fetch(url, {
         method,
         headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify(editedGroupInfo)
       });
 
       if (response.ok) {
         const groupData = await response.json();
-        const groupId = selectedGroup ? selectedGroup.id : groupData.id;
         
-        // 기능 권한 업데이트 (별도 API 호출)
-        const featuresResponse = await fetch('/admin/groups/features', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`
-          },
-          body: JSON.stringify({
-            group_id: groupId,
-            feature_ids: selectedGroupFeatures
-          })
-        });
-
-        if (featuresResponse.ok) {
-          alert(`그룹이 성공적으로 ${selectedGroup ? '수정' : '생성'}되었습니다.`);
-          setShowGroupModal(false);
-          fetchData();
-        } else {
-          alert('그룹은 생성되었지만 기능 권한 설정에 실패했습니다.');
-          setShowGroupModal(false);
-          fetchData();
+        // 기능 할당 업데이트
+        if (selectedGroupFeatures.length > 0) {
+          await fetch('/admin/groups/features', {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              group_id: groupData.id,
+              feature_ids: selectedGroupFeatures
+            })
+          });
         }
+
+        await fetchData();
+        setShowGroupModal(false);
+        alert(selectedGroup ? '그룹이 업데이트되었습니다.' : '새 그룹이 생성되었습니다.');
       } else {
-        const errorData = await response.json();
-        alert(`그룹 ${selectedGroup ? '수정' : '생성'} 실패: ${errorData.detail || '알 수 없는 오류'}`);
+        const error = await response.json();
+        alert(`그룹 저장 실패: ${error.detail || '알 수 없는 오류'}`);
       }
     } catch (error) {
-      console.error(`그룹 ${selectedGroup ? '수정' : '생성'} 중 오류:`, error);
-      alert(`그룹 ${selectedGroup ? '수정' : '생성'} 중 오류가 발생했습니다.`);
+      console.error('그룹 저장 실패:', error);
+      alert('그룹 저장 중 오류가 발생했습니다.');
     }
   };
 
@@ -653,19 +677,42 @@ const AdminPage: React.FC = () => {
       const token = localStorage.getItem('token');
       const response = await fetch(`/admin/groups/${groupId}`, {
         method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` }
+        headers: { 
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
       });
 
       if (response.ok) {
-        alert('그룹이 성공적으로 삭제되었습니다.');
-        fetchData();
+        await fetchData();
+        alert('그룹이 삭제되었습니다.');
       } else {
-        const errorData = await response.json();
-        alert(`그룹 삭제 실패: ${errorData.detail || '알 수 없는 오류'}`);
+        const error = await response.json();
+        alert(`그룹 삭제 실패: ${error.detail || '알 수 없는 오류'}`);
       }
     } catch (error) {
-      console.error('그룹 삭제 중 오류:', error);
+      console.error('그룹 삭제 실패:', error);
       alert('그룹 삭제 중 오류가 발생했습니다.');
+    }
+  };
+
+  // 기능을 오른쪽(할당됨)으로 이동
+  const moveFeatureToAssigned = (featureId: number) => {
+    const feature = unassignedFeatures.find(f => f.id === featureId);
+    if (feature) {
+      setUnassignedFeatures(prev => prev.filter(f => f.id !== featureId));
+      setAssignedFeatures(prev => [...prev, feature]);
+      setSelectedGroupFeatures(prev => [...prev, featureId]);
+    }
+  };
+
+  // 기능을 왼쪽(할당안됨)으로 이동
+  const moveFeatureToUnassigned = (featureId: number) => {
+    const feature = assignedFeatures.find(f => f.id === featureId);
+    if (feature) {
+      setAssignedFeatures(prev => prev.filter(f => f.id !== featureId));
+      setUnassignedFeatures(prev => [...prev, feature]);
+      setSelectedGroupFeatures(prev => prev.filter(id => id !== featureId));
     }
   };
 
@@ -694,8 +741,6 @@ const AdminPage: React.FC = () => {
     pending: users.filter(u => u.approval_status === 'pending').length,
     inactive: users.filter(u => !u.is_active).length
   };
-
-
 
   const getStatusBadge = (user: User) => {
     if (user.approval_status === 'pending') {
@@ -1152,120 +1197,200 @@ const AdminPage: React.FC = () => {
       </div>
 
       {/* 기존 모달들은 유지 */}
-      {/* User Modal */}
+      {/* User Modal - Enhanced UI */}
       {showUserModal && selectedUser && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl mx-4 border border-gray-100">
-            <div className="p-6 border-b border-gray-200">
-              <h3 className="text-lg font-semibold text-gray-900">사용자 정보</h3>
-            </div>
-            <div className="p-6 space-y-4">
-              {isEditingUserInfo ? (
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">실명</label>
-                    <input
-                      type="text"
-                      value={editedUserInfo.real_name}
-                      onChange={(e) => setEditedUserInfo({...editedUserInfo, real_name: e.target.value})}
-                      className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-200 focus:border-gray-300"
-                    />
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-4xl mx-4 border border-gray-100 max-h-[90vh] overflow-hidden">
+            <div className="p-6 border-b border-gray-200 bg-gradient-to-r from-gray-50 to-white">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-4">
+                  <div className="w-12 h-12 bg-gray-900 rounded-full flex items-center justify-center">
+                    <User className="w-6 h-6 text-white" />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">표시명</label>
-                    <input
-                      type="text"
-                      value={editedUserInfo.display_name}
-                      onChange={(e) => setEditedUserInfo({...editedUserInfo, display_name: e.target.value})}
-                      className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-200 focus:border-gray-300"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">전화번호</label>
-                    <input
-                      type="text"
-                      value={editedUserInfo.phone_number}
-                      onChange={(e) => setEditedUserInfo({...editedUserInfo, phone_number: e.target.value})}
-                      className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-200 focus:border-gray-300"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">부서</label>
-                    <input
-                      type="text"
-                      value={editedUserInfo.department}
-                      onChange={(e) => setEditedUserInfo({...editedUserInfo, department: e.target.value})}
-                      className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-200 focus:border-gray-300"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">직책</label>
-                    <input
-                      type="text"
-                      value={editedUserInfo.position}
-                      onChange={(e) => setEditedUserInfo({...editedUserInfo, position: e.target.value})}
-                      className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-200 focus:border-gray-300"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">그룹</label>
-                    <select
-                      value={selectedGroupId || ''}
-                      onChange={(e) => setSelectedGroupId(e.target.value ? parseInt(e.target.value) : null)}
-                      className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-200 focus:border-gray-300"
-                    >
-                      <option value="">그룹 선택</option>
-                      {groups.map(group => (
-                        <option key={group.id} value={group.id}>{group.name}</option>
-                      ))}
-                    </select>
+                    <h3 className="text-xl font-semibold text-gray-900">{selectedUser.real_name}</h3>
+                    <p className="text-sm text-gray-500">{selectedUser.email}</p>
                   </div>
                 </div>
-              ) : (
-                <div className="space-y-3">
-                  <div><strong>실명:</strong> {selectedUser.real_name}</div>
-                  <div><strong>이메일:</strong> {selectedUser.email}</div>
-                  <div><strong>전화번호:</strong> {selectedUser.phone_number || '없음'}</div>
-                  <div><strong>부서:</strong> {selectedUser.department || '없음'}</div>
-                  <div><strong>직책:</strong> {selectedUser.position || '없음'}</div>
-                  <div><strong>그룹:</strong> {selectedUser.group?.name || '없음'}</div>
-                  <div><strong>관리자:</strong> {selectedUser.is_admin ? '예' : '아니오'}</div>
-                  <div><strong>상태:</strong> {getStatusBadge(selectedUser)}</div>
+                <div className="flex items-center space-x-2">
+                  {selectedUser.is_admin && (
+                    <span className="px-3 py-1 text-xs font-medium rounded-full bg-blue-100 text-blue-800">관리자</span>
+                  )}
+                  {getStatusBadge(selectedUser)}
                 </div>
-              )}
+              </div>
             </div>
-            <div className="p-6 border-t border-gray-200 flex justify-end space-x-3">
-              {isEditingUserInfo ? (
-                <>
-                  <button
-                    onClick={() => setIsEditingUserInfo(false)}
-                    className="px-4 py-2 text-gray-700 border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors"
-                  >
-                    취소
-                  </button>
-                  <button
-                    onClick={saveUserInfo}
-                    className="px-4 py-2 bg-gray-900 text-white rounded-xl hover:bg-gray-800 transition-colors"
-                  >
-                    저장
-                  </button>
-                </>
-              ) : (
-                <>
-                  <button
-                    onClick={() => setShowUserModal(false)}
-                    className="px-4 py-2 text-gray-700 border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors"
-                  >
-                    닫기
-                  </button>
-                  <button
-                    onClick={() => setIsEditingUserInfo(true)}
-                    className="px-4 py-2 bg-gray-900 text-white rounded-xl hover:bg-gray-800 transition-colors"
-                  >
-                    편집
-                  </button>
-                </>
-              )}
+            
+            <div className="p-6 overflow-y-auto max-h-[calc(90vh-200px)]">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                {/* 기본 정보 */}
+                <div className="space-y-6">
+                  <div>
+                    <h4 className="text-lg font-medium text-gray-900 mb-4 flex items-center">
+                      <User className="w-5 h-5 mr-2" />
+                      기본 정보
+                    </h4>
+                    <div className="space-y-4 bg-gray-50 p-4 rounded-xl">
+                      <div className="grid grid-cols-1 gap-4">
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">실명</label>
+                          <input
+                            type="text"
+                            value={editedUserInfo.real_name}
+                            onChange={(e) => setEditedUserInfo({...editedUserInfo, real_name: e.target.value})}
+                            className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-200 focus:border-gray-300"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">표시명</label>
+                          <input
+                            type="text"
+                            value={editedUserInfo.display_name}
+                            onChange={(e) => setEditedUserInfo({...editedUserInfo, display_name: e.target.value})}
+                            className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-200 focus:border-gray-300"
+                            placeholder="표시명을 입력하세요"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 연락처 정보 */}
+                  <div>
+                    <h4 className="text-lg font-medium text-gray-900 mb-4 flex items-center">
+                      <Phone className="w-5 h-5 mr-2" />
+                      연락처 정보
+                    </h4>
+                    <div className="space-y-4 bg-gray-50 p-4 rounded-xl">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">
+                          <Phone className="w-4 h-4 mr-1" />
+                          전화번호
+                        </label>
+                        <input
+                          type="text"
+                          value={editedUserInfo.phone_number}
+                          onChange={(e) => setEditedUserInfo({...editedUserInfo, phone_number: e.target.value})}
+                          className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-200 focus:border-gray-300"
+                          placeholder="전화번호를 입력하세요"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">
+                          <Mail className="w-4 h-4 mr-1" />
+                          이메일
+                        </label>
+                        <div className="px-3 py-2 bg-gray-100 border border-gray-200 rounded-lg text-gray-600">
+                          {selectedUser.email}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 조직 정보 & 계정 상태 */}
+                <div className="space-y-6">
+                  <div>
+                    <h4 className="text-lg font-medium text-gray-900 mb-4 flex items-center">
+                      <Building className="w-5 h-5 mr-2" />
+                      조직 정보
+                    </h4>
+                    <div className="space-y-4 bg-gray-50 p-4 rounded-xl">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">부서</label>
+                        <input
+                          type="text"
+                          value={editedUserInfo.department}
+                          onChange={(e) => setEditedUserInfo({...editedUserInfo, department: e.target.value})}
+                          className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-200 focus:border-gray-300"
+                          placeholder="부서를 입력하세요"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">직책</label>
+                        <input
+                          type="text"
+                          value={editedUserInfo.position}
+                          onChange={(e) => setEditedUserInfo({...editedUserInfo, position: e.target.value})}
+                          className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-200 focus:border-gray-300"
+                          placeholder="직책을 입력하세요"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">그룹</label>
+                        <select
+                          value={selectedGroupId || ''}
+                          onChange={(e) => setSelectedGroupId(e.target.value ? parseInt(e.target.value) : null)}
+                          className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-200 focus:border-gray-300"
+                        >
+                          <option value="">그룹 선택</option>
+                          {groups.map(group => (
+                            <option key={group.id} value={group.id}>{group.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 계정 통계 */}
+                  <div>
+                    <h4 className="text-lg font-medium text-gray-900 mb-4 flex items-center">
+                      <Activity className="w-5 h-5 mr-2" />
+                      계정 통계
+                    </h4>
+                    <div className="space-y-3 bg-gray-50 p-4 rounded-xl">
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm text-gray-600 flex items-center">
+                          <Calendar className="w-4 h-4 mr-2" />
+                          가입일
+                        </span>
+                        <span className="text-sm font-medium">{formatDate(selectedUser.created_at)}</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm text-gray-600 flex items-center">
+                          <Activity className="w-4 h-4 mr-2" />
+                          마지막 로그인
+                        </span>
+                        <span className="text-sm font-medium">{formatDate(selectedUser.last_login_at) || '없음'}</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm text-gray-600">로그인 횟수</span>
+                        <span className="text-sm font-medium">{selectedUser.login_count}회</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 추가 정보 */}
+                  <div>
+                    <h4 className="text-lg font-medium text-gray-900 mb-4">추가 정보</h4>
+                    <div className="bg-gray-50 p-4 rounded-xl">
+                      <label className="block text-sm font-medium text-gray-700 mb-1">소개</label>
+                      <textarea
+                        value={editedUserInfo.bio}
+                        onChange={(e) => setEditedUserInfo({...editedUserInfo, bio: e.target.value})}
+                        className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-200 focus:border-gray-300"
+                        rows={3}
+                        placeholder="사용자 소개를 입력하세요"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            <div className="p-6 border-t border-gray-200 bg-gray-50 flex justify-end space-x-3">
+              <button
+                onClick={() => setShowUserModal(false)}
+                className="px-6 py-2 text-gray-700 border border-gray-200 rounded-xl hover:bg-gray-100 transition-colors"
+              >
+                취소
+              </button>
+              <button
+                onClick={saveUserInfo}
+                className="px-6 py-2 bg-gray-900 text-white rounded-xl hover:bg-gray-800 transition-colors"
+              >
+                저장
+              </button>
             </div>
           </div>
         </div>
@@ -1430,7 +1555,7 @@ const AdminPage: React.FC = () => {
               <button
                 onClick={() => {
                   setShowPasswordModal(false);
-                  setPasswordData({user_id: '', new_password: ''});
+                  setPasswordData({ user_id: '', new_password: '' });
                 }}
                 className="px-4 py-2 text-gray-700 border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors"
               >
@@ -1480,13 +1605,18 @@ const AdminPage: React.FC = () => {
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">카테고리</label>
-                  <input
-                    type="text"
-                    value={editedFeatureInfo.category}
-                    onChange={(e) => setEditedFeatureInfo({...editedFeatureInfo, category: e.target.value})}
+                  <select
+                    value={editedFeatureInfo.category_id || ''}
+                    onChange={(e) => setEditedFeatureInfo({...editedFeatureInfo, category_id: e.target.value ? parseInt(e.target.value) : null})}
                     className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-200 focus:border-gray-300"
-                    placeholder="카테고리를 입력하세요"
-                  />
+                  >
+                    <option value="">카테고리 선택</option>
+                    {featureCategories.map(category => (
+                      <option key={category.id} value={category.id}>
+                        {category.icon && `${category.icon} `}{category.display_name}
+                      </option>
+                    ))}
+                  </select>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">아이콘</label>
@@ -1597,7 +1727,7 @@ const AdminPage: React.FC = () => {
                 {selectedGroup ? '그룹 편집' : '새 그룹 추가'}
               </h3>
             </div>
-            <div className="p-6 space-y-6 max-h-96 overflow-y-auto">
+            <div className="p-6 space-y-6 max-h-[70vh] overflow-y-auto">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">그룹명 *</label>
@@ -1622,34 +1752,128 @@ const AdminPage: React.FC = () => {
               </div>
               
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-3">그룹 기능 선택</label>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 max-h-48 overflow-y-auto p-3 border border-gray-200 rounded-lg">
-                  {availableFeatures.map((feature) => (
-                    <div key={feature.id} className="flex items-center">
-                      <input
-                        type="checkbox"
-                        id={`feature-${feature.id}`}
-                        checked={selectedGroupFeatures.includes(feature.id)}
-                        onChange={(e) => {
-                          if (e.target.checked) {
-                            setSelectedGroupFeatures([...selectedGroupFeatures, feature.id]);
-                          } else {
-                            setSelectedGroupFeatures(selectedGroupFeatures.filter(id => id !== feature.id));
-                          }
-                        }}
-                        className="h-4 w-4 text-gray-600 focus:ring-gray-500 border-gray-300 rounded"
-                      />
-                      <label htmlFor={`feature-${feature.id}`} className="ml-2 text-sm text-gray-900 flex items-center">
-                        <span className="mr-1">{feature.icon}</span>
-                        {feature.display_name}
-                      </label>
+                <label className="block text-sm font-medium text-gray-700 mb-3">그룹 기능 관리</label>
+                <div className="grid grid-cols-2 gap-4">
+                  {/* 미할당 기능 리스트 */}
+                  <div>
+                    <h4 className="text-sm font-medium text-gray-700 mb-2 flex items-center">
+                      <ArrowLeft className="w-4 h-4 mr-1" />
+                      미할당 기능 ({unassignedFeatures.length}개)
+                    </h4>
+                    <div className="border border-gray-200 rounded-lg h-48 overflow-y-auto bg-gray-50">
+                      {unassignedFeatures.length === 0 ? (
+                        <div className="flex items-center justify-center h-full text-gray-500 text-sm">
+                          모든 기능이 할당되었습니다
+                        </div>
+                      ) : (
+                        <div className="p-2 space-y-1">
+                          {unassignedFeatures.map((feature) => (
+                            <div
+                              key={feature.id}
+                              className="flex items-center justify-between p-2 bg-white rounded border border-gray-100 hover:border-gray-300 transition-colors cursor-pointer"
+                              onClick={() => moveFeatureToAssigned(feature.id)}
+                            >
+                              <div className="flex items-center">
+                                <span className="mr-2">{feature.icon}</span>
+                                <span className="text-sm">{feature.display_name}</span>
+                              </div>
+                              <ArrowRight className="w-4 h-4 text-gray-400" />
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
-                  ))}
+                  </div>
+
+                  {/* 할당된 기능 리스트 */}
+                  <div>
+                    <h4 className="text-sm font-medium text-gray-700 mb-2 flex items-center">
+                      <ArrowRight className="w-4 h-4 mr-1" />
+                      할당된 기능 ({assignedFeatures.length}개)
+                    </h4>
+                    <div className="border border-gray-200 rounded-lg h-48 overflow-y-auto bg-green-50">
+                      {assignedFeatures.length === 0 ? (
+                        <div className="flex items-center justify-center h-full text-gray-500 text-sm">
+                          할당된 기능이 없습니다
+                        </div>
+                      ) : (
+                        <div className="p-2 space-y-1">
+                          {assignedFeatures.map((feature) => (
+                            <div
+                              key={feature.id}
+                              className="flex items-center justify-between p-2 bg-white rounded border border-green-200 hover:border-green-300 transition-colors cursor-pointer"
+                              onClick={() => moveFeatureToUnassigned(feature.id)}
+                            >
+                              <div className="flex items-center">
+                                <ArrowLeft className="w-4 h-4 text-gray-400" />
+                                <span className="mr-2 ml-2">{feature.icon}</span>
+                                <span className="text-sm">{feature.display_name}</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </div>
                 <p className="text-xs text-gray-500 mt-2">
-                  선택된 기능: {selectedGroupFeatures.length}개
+                  좌측 기능을 클릭하여 할당하거나, 우측 기능을 클릭하여 해제할 수 있습니다.
                 </p>
               </div>
+
+              {/* 그룹 사용자 목록 */}
+              {selectedGroup && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-3">
+                    그룹 소속 사용자 ({groupUsers.length}명)
+                  </label>
+                  <div className="border border-gray-200 rounded-lg max-h-48 overflow-y-auto">
+                    {groupUsers.length === 0 ? (
+                      <div className="p-4 text-center text-gray-500 text-sm">
+                        이 그룹에 속한 사용자가 없습니다.
+                      </div>
+                    ) : (
+                      <div className="divide-y divide-gray-100">
+                        {groupUsers.map((user) => (
+                          <div key={user.id} className="p-3 flex items-center justify-between hover:bg-gray-50">
+                            <div className="flex items-center space-x-3">
+                              <div className="w-8 h-8 bg-gray-100 rounded-full flex items-center justify-center">
+                                <User className="w-4 h-4 text-gray-600" />
+                              </div>
+                              <div>
+                                <p className="text-sm font-medium text-gray-900">{user.real_name}</p>
+                                <p className="text-xs text-gray-500">{user.email}</p>
+                              </div>
+                            </div>
+                            <div className="flex items-center space-x-2">
+                              {user.department && (
+                                <span className="text-xs px-2 py-1 bg-gray-100 text-gray-600 rounded">
+                                  {user.department}
+                                </span>
+                              )}
+                              {user.is_admin && (
+                                <span className="text-xs px-2 py-1 bg-blue-100 text-blue-800 rounded">
+                                  관리자
+                                </span>
+                              )}
+                              <span className={`text-xs px-2 py-1 rounded ${
+                                user.is_active && user.approval_status === 'approved'
+                                  ? 'bg-green-100 text-green-800'
+                                  : user.approval_status === 'pending'
+                                  ? 'bg-yellow-100 text-yellow-800'
+                                  : 'bg-red-100 text-red-800'
+                              }`}>
+                                {user.is_active && user.approval_status === 'approved' ? '활성' : 
+                                 user.approval_status === 'pending' ? '대기' : '비활성'}
+                              </span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
             <div className="p-6 border-t border-gray-200 flex justify-end space-x-3">
               <button
