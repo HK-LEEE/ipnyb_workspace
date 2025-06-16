@@ -5,6 +5,7 @@ RAG 데이터소스의 생성, 관리, 문서 업로드, 검색 등을 담당합
 """
 
 import uuid
+import re
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 
@@ -16,6 +17,7 @@ from ..models.user import User
 from .models import RAGDataSource, OwnerType
 from .auth import LLMOpsAuthService
 from ..services.chroma_service import ChromaService
+from ..schemas.chroma import ChromaCollectionCreate, ChromaDocumentAdd, ChromaQueryRequest
 from .file_storage_service import FileStorageService
 
 import logging
@@ -37,7 +39,36 @@ class RAGDataSourceService:
             length_function=len,
         )
     
-    def create_datasource(
+    def _validate_datasource_name(self, name: str) -> None:
+        """데이터소스 이름 검증"""
+        if not name or not name.strip():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="데이터소스 이름은 필수입니다."
+            )
+        
+        # 길이 검증
+        if len(name.strip()) < 2:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="데이터소스 이름은 최소 2자 이상이어야 합니다."
+            )
+        
+        if len(name.strip()) > 50:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="데이터소스 이름은 최대 50자까지 입력할 수 있습니다."
+            )
+        
+        # 영어, 숫자, 공백, 하이픈, 밑줄만 허용
+        english_pattern = re.compile(r'^[a-zA-Z0-9\s\-_]+$')
+        if not english_pattern.match(name.strip()):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="데이터소스 이름은 영어, 숫자, 공백, 하이픈(-), 밑줄(_)만 사용할 수 있습니다."
+            )
+    
+    async def create_datasource(
         self, 
         name: str, 
         description: Optional[str],
@@ -48,6 +79,9 @@ class RAGDataSourceService:
     ) -> RAGDataSource:
         """새 RAG 데이터소스 생성"""
         try:
+            # 이름 검증
+            self._validate_datasource_name(name)
+            
             # 권한 확인
             if not self.auth_service.can_create_rag_datasource(current_user, owner_type, owner_id):
                 raise HTTPException(
@@ -55,20 +89,33 @@ class RAGDataSourceService:
                     detail="데이터소스 생성 권한이 없습니다."
                 )
             
-            # 개선된 컬렉션 이름 생성 체계
-            # 형식: {owner_type}_{owner_id}_{unique_id}_{safe_name}
-            # 예시: 
-            # - 개인: user_b1211d78-59f3-4e4c-852a-212006fdd7ed_a1b2c3d4_my_docs
-            # - 그룹: group_123_a1b2c3d4_team_docs
+            # ChromaDB 컬렉션 이름 생성 (영숫자와 밑줄만 사용)
+            # 형식: {owner_type}_{clean_owner_id}_{unique_id}_{safe_name}
             unique_id = uuid.uuid4().hex[:8]
-            safe_name = "".join(c for c in name if c.isalnum() or c in ['_', '-'])[:20]
+            
+            # owner_id에서 하이픈 제거 (UUID의 경우)
+            clean_owner_id = owner_id.replace("-", "")
+            
+            # 이름에서 영숫자만 추출 (공백, 하이픈을 밑줄로 변환)
+            safe_name = re.sub(r'[^a-zA-Z0-9]', '_', name.strip())[:20]
+            safe_name = re.sub(r'_+', '_', safe_name)  # 연속된 밑줄 제거
+            safe_name = safe_name.strip('_')  # 앞뒤 밑줄 제거
+            
+            if not safe_name:  # 영숫자가 없는 경우 기본값 사용
+                safe_name = "datasource"
             
             if owner_type == OwnerType.GROUP:
-                collection_name = f"group_{owner_id}_{unique_id}_{safe_name}"
+                collection_name = f"group_{clean_owner_id}_{unique_id}_{safe_name}"
             else:  # USER
-                collection_name = f"user_{owner_id}_{unique_id}_{safe_name}"
+                collection_name = f"user_{clean_owner_id}_{unique_id}_{safe_name}"
+            
+            # 컬렉션 이름이 ChromaDB 규칙에 맞는지 확인
+            if len(collection_name) < 3 or len(collection_name) > 63:
+                # 길이가 맞지 않으면 단순화
+                collection_name = f"user_{clean_owner_id[:8]}_{unique_id}"
             
             logger.info(f"Creating RAG datasource with collection: {collection_name}")
+            logger.info(f"Collection name length: {len(collection_name)}")
             logger.info(f"Owner type: {owner_type.value}, Owner ID: {owner_id}")
             logger.info(f"Created by user: {current_user.id}")
             
@@ -102,10 +149,16 @@ class RAGDataSourceService:
                 "access_level": "group" if owner_type == OwnerType.GROUP else "private"
             }
             
-            self.chroma_service.create_collection(
-                collection_name,
-                metadata=collection_metadata
+            # ChromaCollectionCreate 객체 생성
+            collection_create = ChromaCollectionCreate(
+                name=collection_name,
+                metadata=collection_metadata,
+                owner_type=owner_type.value,
+                owner_id=owner_id
             )
+            
+            # ChromaDB 컬렉션 생성
+            await self.chroma_service.create_collection(collection_create)
             
             self.db.commit()
             logger.info(f"RAG datasource created successfully: {datasource.id} (collection: {collection_name})")
@@ -284,16 +337,23 @@ class RAGDataSourceService:
             
             # ChromaDB에 문서 추가
             if uploaded_docs:
-                success = self.chroma_service.add_documents(
-                    datasource.chroma_collection_name,
-                    uploaded_docs
+                # ChromaDocumentAdd 객체 생성
+                documents_to_add = ChromaDocumentAdd(
+                    documents=[doc["content"] for doc in uploaded_docs],
+                    metadatas=[doc["metadata"] for doc in uploaded_docs],
+                    ids=[doc["id"] for doc in uploaded_docs]
                 )
                 
-                if success:
-                    # 데이터소스 문서 수 업데이트
-                    datasource.document_count += len(uploaded_docs)
-                    datasource.last_updated = datetime.now()
-                    self.db.commit()
+                # collection_name을 collection_id로 사용 (ChromaService에서 name으로도 검색 가능)
+                await self.chroma_service.add_documents(
+                    datasource.chroma_collection_name,
+                    documents_to_add
+                )
+                
+                # 데이터소스 문서 수 업데이트
+                datasource.document_count += len(uploaded_docs)
+                datasource.last_updated = datetime.now()
+                self.db.commit()
             
             return {
                 "success": True,
@@ -497,11 +557,11 @@ class RAGDataSourceService:
         
         return type_mapping.get(extension, 'text')
     
-    def delete_datasource(self, datasource: RAGDataSource, current_user: User) -> bool:
+    async def delete_datasource(self, datasource: RAGDataSource, current_user: User) -> bool:
         """RAG 데이터소스 삭제 (파일 저장소 정리 포함)"""
         try:
             # ChromaDB 컬렉션 삭제
-            self.chroma_service.delete_collection(datasource.chroma_collection_name)
+            await self.chroma_service.delete_collection(datasource.chroma_collection_name)
             
             # 파일 저장소 정리
             self.file_storage_service.cleanup_datasource_files(datasource)
@@ -521,34 +581,51 @@ class RAGDataSourceService:
                 detail="데이터소스 삭제에 실패했습니다."
             )
     
-    def query_documents(self, datasource: RAGDataSource, query: str, top_k: int = 5) -> Dict[str, Any]:
+    async def query_documents(self, datasource: RAGDataSource, query: str, top_k: int = 5) -> Dict[str, Any]:
         """RAG 데이터소스에서 문서 검색 (기본 버전)"""
         try:
-            # ChromaDB에서 검색 수행
-            search_results = self.chroma_service.query_documents(
-                datasource.chroma_collection_name,
-                query,
-                n_results=top_k
+            # ChromaQueryRequest 객체 생성
+            query_request = ChromaQueryRequest(
+                query_texts=[query],
+                n_results=top_k,
+                include=["documents", "metadatas", "distances"]
             )
             
-            # 검색 결과 포맷팅
+            # ChromaDB에서 검색 수행 (collection_name을 collection_id로 사용)
+            search_results = await self.chroma_service.query_documents(
+                datasource.chroma_collection_name,
+                query_request
+            )
+            
+            # ChromaDB 결과를 RAG 서비스 형식으로 변환
             formatted_results = []
-            for result in search_results:
-                metadata = result.get("metadata", {})
+            if search_results and 'documents' in search_results and search_results['documents']:
+                documents = search_results['documents'][0]  # 첫 번째 쿼리의 결과
+                metadatas = search_results.get('metadatas', [[]])[0]
+                distances = search_results.get('distances', [[]])[0]
+                ids = search_results.get('ids', [[]])[0]
                 
-                formatted_results.append({
-                    "id": result["id"],
-                    "content": result["content"],
-                    "similarity": result["similarity"],
-                    "distance": result["distance"],
-                    "confidence": self._calculate_confidence(result["similarity"]),
-                    "metadata": {
-                        "filename": metadata.get("filename", "알 수 없음"),
-                        "chunk_index": metadata.get("chunk_index", 0),
-                        "upload_time": metadata.get("upload_time", ""),
-                        "file_size": metadata.get("file_size", 0)
-                    }
-                })
+                for i, doc in enumerate(documents):
+                    metadata = metadatas[i] if i < len(metadatas) else {}
+                    distance = distances[i] if i < len(distances) else 1.0
+                    doc_id = ids[i] if i < len(ids) else f"doc_{i}"
+                    
+                    # 거리를 유사도로 변환 (거리가 작을수록 유사도가 높음)
+                    similarity = max(0, 1 - distance)
+                    
+                    formatted_results.append({
+                        "id": doc_id,
+                        "content": doc,
+                        "similarity": similarity,
+                        "distance": distance,
+                        "confidence": self._calculate_confidence(similarity),
+                        "metadata": {
+                            "filename": metadata.get("filename", "알 수 없음"),
+                            "chunk_index": metadata.get("chunk_index", 0),
+                            "upload_time": metadata.get("upload_time", ""),
+                            "file_size": metadata.get("file_size", 0)
+                        }
+                    })
             
             return {
                 "query": query,
@@ -669,7 +746,7 @@ class RAGDataSourceService:
                 )
                 search_type = "hybrid"
             else:
-                search_results = self.chroma_service.query_documents(
+                search_results = self.chroma_service.query_documents_simple(
                     datasource.chroma_collection_name,
                     query,
                     n_results=top_k

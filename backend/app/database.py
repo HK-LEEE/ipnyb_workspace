@@ -79,6 +79,14 @@ SessionLocal = sessionmaker(
     bind=engine
 )
 
+# 비동기 세션 팩토리 생성
+AsyncSessionLocal = sessionmaker(
+    class_=AsyncSession,
+    autocommit=False,
+    autoflush=False,
+    bind=async_engine
+)
+
 # 데이터베이스 세션 의존성
 def get_db():
     """데이터베이스 세션 생성 및 관리"""
@@ -116,6 +124,32 @@ def get_db():
                 db.close()
             except Exception as e:
                 logger.error(f"데이터베이스 세션 종료 실패: {str(e)}")
+
+async def get_async_session():
+    """비동기 데이터베이스 세션 생성 및 관리"""
+    async with AsyncSessionLocal() as session:
+        try:
+            yield session
+        except SQLAlchemyError as e:
+            logger.error(f"비동기 SQLAlchemy 오류: {str(e)}")
+            await session.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="데이터베이스 연결 오류가 발생했습니다."
+            )
+        except HTTPException:
+            # HTTPException은 그대로 재발생 (인증 에러 등)
+            await session.rollback()
+            raise
+        except Exception as e:
+            logger.error(f"비동기 데이터베이스 세션 생성 실패: {str(e)}")
+            import traceback
+            logger.error(f"세부 에러: {traceback.format_exc()}")
+            await session.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="서버 내부 오류가 발생했습니다."
+            )
 
 def create_tables():
     """모든 테이블 생성"""

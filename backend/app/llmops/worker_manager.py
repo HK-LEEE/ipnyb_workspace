@@ -13,7 +13,7 @@ import asyncio
 import subprocess
 import threading
 import logging
-from typing import Dict, Optional, Any, Tuple
+from typing import Dict, Optional, Any, Tuple, List
 from pathlib import Path
 import psutil
 
@@ -72,13 +72,21 @@ class WorkerPoolManager:
         
         logger.info(f"WorkerPoolManager 초기화 완료 - 최대 워커: {max_workers}, 타임아웃: {worker_timeout}초")
     
-    async def get_or_create_worker(self, project_id: str, flow_id: str) -> Optional[Tuple[str, int]]:
+    async def get_or_create_worker(
+        self, 
+        project_id: str, 
+        flow_id: str, 
+        user_id: str, 
+        user_groups: List[str]
+    ) -> Optional[Tuple[str, int]]:
         """
-        워커를 가져오거나 새로 생성
+        워커를 가져오거나 새로 생성 (권한 검사 포함)
         
         Args:
             project_id: 프로젝트 ID
             flow_id: 플로우 ID
+            user_id: 사용자 ID
+            user_groups: 사용자 그룹 목록
             
         Returns:
             (worker_url, port) 또는 None (실패 시)
@@ -104,9 +112,15 @@ class WorkerPoolManager:
                 self._remove_worker(worker_key)
         
         # 새 워커 생성 (Cold Start)
-        return await self._create_new_worker(project_id, flow_id)
+        return await self._create_new_worker(project_id, flow_id, user_id, user_groups)
     
-    async def _create_new_worker(self, project_id: str, flow_id: str) -> Optional[Tuple[str, int]]:
+    async def _create_new_worker(
+        self, 
+        project_id: str, 
+        flow_id: str, 
+        user_id: str, 
+        user_groups: List[str]
+    ) -> Optional[Tuple[str, int]]:
         """
         새 워커 생성
         
@@ -125,9 +139,9 @@ class WorkerPoolManager:
                 # 가장 오래된 유휴 워커 제거
                 await self._cleanup_oldest_worker()
             
-            # FlowProvider로부터 플로우 데이터 가져오기
-            logger.info(f"FlowProvider에서 플로우 데이터 요청: {worker_key}")
-            flow_data = await flow_provider.get_flow_data(project_id, flow_id)
+            # FlowProvider로부터 권한 검사 후 플로우 데이터 가져오기
+            logger.info(f"FlowProvider에서 게시된 플로우 데이터 요청: {worker_key}, 사용자: {user_id}")
+            flow_data = await flow_provider.get_published_flow(flow_id, user_id, user_groups)
             
             if flow_data is None:
                 logger.error(f"플로우 데이터를 가져올 수 없음: {worker_key}")
@@ -384,9 +398,8 @@ class WorkerPoolManager:
         worker_key = f"{project_id}:{flow_id}"
         
         try:
-            # 1. FlowProvider 캐시 무효화
-            flow_provider.invalidate_cache(project_id, flow_id)
-            logger.info(f"플로우 캐시 무효화: {worker_key}")
+            # 1. FlowProvider 캐시 무효화 (현재는 캐시가 없으므로 스킵)
+            logger.info(f"플로우 캐시 무효화 (스킵): {worker_key}")
             
             # 2. 기존 워커 제거
             with self.lock:

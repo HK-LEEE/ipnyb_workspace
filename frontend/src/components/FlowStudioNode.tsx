@@ -80,28 +80,84 @@ const FlowStudioNode: React.FC<FlowStudioNodeProps> = ({
   const nodeId = id || data.id;
 
   // AuthContext를 사용하여 실제 사용자 정보를 가져옴
-  const { user } = useAuth();
+  const { user, isLoading = true } = useAuth();
+  
+  // 디버깅: 사용자 정보 상태 로그
+  useEffect(() => {
+    console.log('👤 Auth 상태:', { user: !!user, isLoading, userId: user?.id });
+  }, [user, isLoading]);
 
-  // ChromaDB Collections 로드
+  // RAG Collections 로드 (FlowStudio용)
   const loadChromaCollections = useCallback(async () => {
-    if (data.type !== 'RAGChroma' || !user) return;
+    console.log('🔄 loadChromaCollections 호출됨', { 
+      type: data.type, 
+      user: !!user, 
+      isLoading,
+      token: !!localStorage.getItem('token')
+    });
     
+    if (data.type !== 'RAGChroma') {
+      console.log('❌ RAG 컴포넌트가 아님:', data.type);
+      return;
+    }
+    
+    // 사용자 정보가 있으면 바로 진행, 없으면 토큰으로 확인
+    if (!user) {
+      const token = localStorage.getItem('token');
+      if (!token) {
+        console.log('❌ 토큰이 없음 - 로그인이 필요합니다');
+        return;
+      }
+      
+      // 로딩 중이면 잠시 대기 (사용자 정보가 없을 때만)
+      if (isLoading) {
+        console.log('⏳ 사용자 정보 로딩 중, 잠시 대기');
+        return;
+      }
+      
+      console.log('⚠️ 사용자 정보는 없지만 토큰이 있음 - API 호출 시도');
+    } else {
+      console.log('✅ 사용자 정보 확인됨 - API 호출 진행');
+    }
+    
+    console.log('🚀 RAG Collections API 호출 시작');
     setLoadingCollections(true);
+    
     try {
-      const userInfo = {
-        user_id: user.id, // 이미 string 타입이므로 toString() 불필요
-        group_id: '', // 현재 User 타입에 group_id가 없으므로 빈 문자열
-        owner_type: 'user' as const // 기본적으로 user로 설정
-      };
-      const collections = await chromaDbApi.getCollections(userInfo);
+      // FlowStudio용 RAG Collections API 호출
+      const token = localStorage.getItem('token');
+      console.log('🔑 토큰 확인:', !!token);
+      
+      // axios 인스턴스를 사용해서 자동으로 헤더가 설정되도록 함
+      const api = (await import('../services/api')).default;
+      const response = await api.get('/llmops/rag-collections');
+      
+      console.log('📡 API 응답:', { status: response.status, data: response.data });
+      
+      const responseData = response.data;
+      console.log('📄 API 응답 데이터:', responseData);
+      
+      // API 응답을 ChromaCollection 형태로 변환
+      const collections: ChromaCollection[] = responseData.collections.map((collection: any) => ({
+        id: collection.value,
+        name: collection.label,
+        description: collection.description,
+        document_count: collection.document_count,
+        owner_type: collection.owner_type,
+        owner_id: collection.owner_id,
+        is_active: collection.is_active
+      }));
+      
+      console.log('✅ Collections 변환 완료:', collections);
       setChromaCollections(collections);
     } catch (error) {
-      console.error('Failed to load ChromaDB collections:', error);
+      console.error('💥 RAG Collections 로드 실패:', error);
       setChromaCollections([]);
     } finally {
       setLoadingCollections(false);
+      console.log('🏁 RAG Collections 로드 완료');
     }
-  }, [data.type, user]);
+  }, [data.type, user, isLoading]);
 
   // Ollama Models 로드
   const loadOllamaModels = useCallback(async (baseUrl: string) => {
@@ -130,10 +186,17 @@ const FlowStudioNode: React.FC<FlowStudioNodeProps> = ({
 
   // RAG 컴포넌트일 때 Collections 로드
   useEffect(() => {
+    console.log('🎯 useEffect 트리거됨:', { 
+      type: data.type, 
+      isRAG: data.type === 'RAGChroma',
+      user: !!user,
+      isLoading
+    });
     if (data.type === 'RAGChroma') {
+      console.log('✅ RAG 컴포넌트 감지, Collections 로드 시작');
       loadChromaCollections();
     }
-  }, [data.type, loadChromaCollections]);
+  }, [data.type, loadChromaCollections, user, isLoading]);
 
   // Ollama 컴포넌트일 때 base_url 변경 시 모델 로드
   useEffect(() => {
@@ -256,8 +319,8 @@ const FlowStudioNode: React.FC<FlowStudioNodeProps> = ({
          // RAG Collection Name 필드의 경우 동적으로 로드된 Collections 사용
         if (data.type === 'RAGChroma' && field.name === 'collection_name') {
           const collectionOptions = chromaCollections.map(collection => ({
-            value: collection.name,
-            label: collection.display_name || collection.name
+            value: collection.id, // Collection ID (실제 Chroma collection name)
+            label: collection.name // Collection 표시명
           }));
 
           return (
@@ -278,10 +341,31 @@ const FlowStudioNode: React.FC<FlowStudioNodeProps> = ({
                 ))}
               </select>
               {chromaCollections.length === 0 && !loadingCollections && (
-                <p className="text-xs text-gray-500 mt-1">
-                  사용 가능한 Collection이 없습니다.
-                </p>
+                <div className="space-y-1 mt-1">
+                  <p className="text-xs text-gray-500">
+                    사용 가능한 Collection이 없습니다.
+                  </p>
+                  <a 
+                    href="/rag-datasource" 
+                    className="text-xs text-blue-600 hover:text-blue-800 underline"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    RAG 데이터소스 생성하기
+                  </a>
+                </div>
               )}
+                             {/* Collection 새로고침 버튼 */}
+               <button
+                 onClick={() => {
+                   console.log('🔄 새로고침 버튼 클릭됨');
+                   loadChromaCollections();
+                 }}
+                 className="text-xs text-blue-600 hover:text-blue-800 mt-1 underline"
+                 disabled={loadingCollections}
+               >
+                 {loadingCollections ? '로딩 중...' : 'Collection 목록 새로고침'}
+               </button>
             </div>
           );
         }

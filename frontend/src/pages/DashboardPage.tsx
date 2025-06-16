@@ -223,7 +223,7 @@ const DashboardPage: React.FC = () => {
             </div>
             
             <h1 className="text-3xl md:text-4xl font-bold text-gray-900 mb-3 font-display">
-              MAI-X Platform
+              MAX Platform
             </h1>
             <p className="text-lg text-gray-600 mb-8">
               Manufacturing Artificial Intelligence & Digital Transformation

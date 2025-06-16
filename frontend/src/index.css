@@ -127,7 +127,7 @@ input:checked + .toggle-slider:before {
 }
 
 /* React Flow 커스텀 스타일 */
-.react-flow__node-langflow {
+.react-flow__node-flowstudionode {
   background: transparent;
   border: none;
   padding: 0;

@@ -24,9 +24,13 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   useEffect(() => {
     const initAuth = async () => {
+      console.log('🔐 AuthContext initAuth 시작:', { hasToken: !!token });
+      
       if (token) {
         try {
+          console.log('📡 authAPI.getMe() 호출 시작');
           const userData = await authAPI.getMe()
+          console.log('✅ 사용자 정보 로드 성공:', userData);
           setUser(userData)
           
           // 로그인 상태에서 토큰 자동 갱신 타이머 시작
@@ -37,11 +41,16 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             clearInterval(timerId)
           }
         } catch (error) {
+          console.error('❌ 사용자 정보 로드 실패:', error);
           localStorage.removeItem('token')
           localStorage.removeItem('refreshToken')
           setToken(null)
         }
+      } else {
+        console.log('⚠️ 토큰이 없음 - 로그인 필요');
       }
+      
+      console.log('🏁 AuthContext 로딩 완료');
       setIsLoading(false)
     }
 

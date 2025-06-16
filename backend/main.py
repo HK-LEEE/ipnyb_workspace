@@ -20,7 +20,7 @@ from app.models import User
 
 # FastAPI 애플리케이션 생성
 app = FastAPI(
-    title="MAI-X",
+    title="MAX",
     description="종합 AI 및 데이터분석 플랫폼",
     version="2.0.0"
 )

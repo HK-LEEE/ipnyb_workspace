@@ -46,6 +46,7 @@ import FlowStudioNode, { FlowStudioNodeData } from '../components/FlowStudioNode
 import { nodeTemplates, NodeTemplate } from '../components/NodeTemplates';
 import { llmService, FlowExecutionEngine, defaultModelConfigs } from '../services/llmService';
 import FlowSaveModal from '../components/flow-studio/FlowSaveModal';
+import FlowTestPanel from '../components/flow-studio/FlowTestPanel';
 import { flowStudioApi } from '../services/flowStudioApi';
 
 // 커스텀 노드 타입 정의
@@ -101,7 +102,7 @@ const createNodeTypes = (
   handleCopyNodeById: (nodeId: string) => void,
   handleNodeDataChange: (nodeId: string, fieldName: string, value: any) => void
 ): NodeTypes => ({
-  langflow: (props: any) => (
+  flowstudionode: (props: any) => (
     <FlowStudioNode
       {...props}
       onDelete={() => handleDeleteNodeById(props.id)}
@@ -209,7 +210,12 @@ const FlowStudioWorkspace: React.FC = () => {
         
         if (flow.flow_data.nodes && Array.isArray(flow.flow_data.nodes)) {
           console.log('Loading nodes:', flow.flow_data.nodes);
-          setNodes(flow.flow_data.nodes);
+          // 기존 'langflow' 타입을 'flowstudionode'로 변환 (호환성 유지)
+          const migratedNodes = flow.flow_data.nodes.map((node: any) => ({
+            ...node,
+            type: node.type === 'langflow' ? 'flowstudionode' : node.type
+          }));
+          setNodes(migratedNodes);
         } else {
           console.log('No nodes found in flow data');
         }
@@ -331,7 +337,7 @@ const FlowStudioWorkspace: React.FC = () => {
     if (!globalNodeTypes || globalHandleNodeDataChange !== handleNodeDataChange) {
       globalHandleNodeDataChange = handleNodeDataChange;
       globalNodeTypes = {
-        langflow: (props: any) => (
+        flowstudionode: (props: any) => (
           <FlowStudioNode
             {...props}
             onDelete={() => handleDeleteNodeById(props.id)}
@@ -439,7 +445,7 @@ const FlowStudioWorkspace: React.FC = () => {
 
       const newNode: Node = {
         id: `${template.id}_${Date.now()}`,
-        type: 'langflow',
+        type: 'flowstudionode',
         position,
         data: { ...template } as any,
       };
@@ -555,6 +561,68 @@ const FlowStudioWorkspace: React.FC = () => {
     }
   };
 
+  // 새로운 테스트 실행 함수 (백엔드 API 사용)
+  const handleTestFlow = async (input: string, stream: boolean = false) => {
+    if (nodes.length === 0) {
+      throw new Error('실행할 플로우가 없습니다. 컴포넌트를 추가해주세요.');
+    }
+
+    setIsExecuting(true);
+    try {
+      // 플로우 데이터 준비
+      const flowData = {
+        nodes: nodes.map((node: any) => ({
+          id: node.id,
+          type: node.type,
+          position: node.position,
+          data: node.data,
+        })),
+        edges: edges.map((edge: any) => ({
+          id: edge.id,
+          source: edge.source,
+          target: edge.target,
+          sourceHandle: edge.sourceHandle,
+          targetHandle: edge.targetHandle,
+        })),
+      };
+
+      // 백엔드 테스트 API 호출
+      const response = await fetch('/api/llmops/test-flow', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+        },
+        body: JSON.stringify({
+          flow_data: flowData,
+          input_data: { text: input },
+          stream: stream,
+          parameters: {}
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || `HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      if (stream) {
+        // 스트리밍 응답 처리 (향후 구현)
+        const result = await response.text();
+        return result;
+      } else {
+        // 일반 응답 처리
+        const result = await response.json();
+        return result.result || result;
+      }
+    } catch (error) {
+      console.error('Test flow error:', error);
+      throw error;
+    } finally {
+      setIsExecuting(false);
+    }
+  };
+
   const handlePublishFlow = async () => {
     if (!currentFlow) {
       toast.error('저장된 플로우가 없습니다. 먼저 플로우를 저장해주세요.');
@@ -604,7 +672,7 @@ const FlowStudioWorkspace: React.FC = () => {
       const template = selectedComponent as any;
       const newNode: Node = {
         id: `${template.id || template.data?.id}_${Date.now()}`,
-        type: 'langflow',
+        type: 'flowstudionode',
         position: {
           x: (template.position?.x || 0) + 50,
           y: (template.position?.y || 0) + 50,
@@ -847,7 +915,7 @@ const FlowStudioWorkspace: React.FC = () => {
               </button>
 
               <button
-                onClick={handleExecuteFlow}
+                onClick={() => setShowPlayground(true)}
                 disabled={isExecuting}
                 className={`px-3 py-2 rounded-lg flex items-center space-x-1 ${
                   isExecuting 
@@ -946,60 +1014,15 @@ const FlowStudioWorkspace: React.FC = () => {
         </div>
       </div>
 
-      {/* Right Sidebar - Playground */}
-      {showPlayground && (
-        <div className="w-96 bg-white border-l border-gray-200 flex flex-col">
-          <div className="p-4 border-b border-gray-200">
-            <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold">Show Run</h2>
-              <button
-                onClick={() => setShowPlayground(false)}
-                className="p-1 hover:bg-gray-100 rounded"
-              >
-                ×
-              </button>
-            </div>
-          </div>
-          
-          <div className="flex-1 flex flex-col p-4">
-            <div className="flex-1">
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  입력
-                </label>
-                <textarea
-                  value={playgroundInput}
-                  onChange={(e) => setPlaygroundInput(e.target.value)}
-                  className="w-full h-24 px-3 py-2 border border-gray-300 rounded-lg resize-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  placeholder="여기에 메시지를 입력하세요..."
-                />
-              </div>
-              
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  출력
-                </label>
-                <div className="w-full h-40 px-3 py-2 border border-gray-300 rounded-lg bg-gray-50 overflow-y-auto">
-                  <pre className="text-sm whitespace-pre-wrap">{executionResult || '아직 출력이 없습니다. 플로우를 실행하여 결과를 확인하세요.'}</pre>
-                </div>
-              </div>
-            </div>
-            
-            <button
-              onClick={handleExecuteFlow}
-              disabled={isExecuting}
-              className={`w-full py-2 rounded-lg flex items-center justify-center space-x-2 ${
-                isExecuting 
-                  ? 'bg-gray-400 text-white cursor-not-allowed' 
-                  : 'bg-blue-600 text-white hover:bg-blue-700'
-              }`}
-            >
-              <Play className="h-4 w-4" />
-              <span>{isExecuting ? '실행 중...' : '플로우 실행'}</span>
-            </button>
-          </div>
-        </div>
-      )}
+      {/* Flow Test Panel */}
+      <FlowTestPanel
+        isOpen={showPlayground}
+        onClose={() => setShowPlayground(false)}
+        onExecute={handleTestFlow}
+        isExecuting={isExecuting}
+        nodes={nodes}
+        edges={edges}
+      />
 
       {/* Flow Save Modal */}
       <FlowSaveModal

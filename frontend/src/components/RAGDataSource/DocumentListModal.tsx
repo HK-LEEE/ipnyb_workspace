@@ -7,39 +7,43 @@ import { useQuery, useMutation, useQueryClient } from 'react-query';
 import { 
   X, 
   FileText, 
-  Trash2, 
+  File, 
   Search, 
-  ChevronLeft, 
-  ChevronRight,
-  AlertTriangle,
-  Clock,
-  User,
-  HardDrive,
-  Download,
-  File,
-  Folder
+  Trash2, 
+  HardDrive, 
+  Clock, 
+  User, 
+  Folder,
+  AlertTriangle
 } from 'lucide-react';
-import { toast } from 'react-hot-toast';
 import ragDataSourceService from '../../services/ragDataSourceService';
 
+// 백엔드에서 실제로 반환하는 문서 구조에 맞게 수정
 interface Document {
   id: string;
-  filename: string;
-  chunk_index: number;
-  total_chunks: number;
-  file_size: number;
-  upload_time: string;
-  uploaded_by: string;
-  preview: string;
-  content_length: number;
+  content: string;      // 미리보기 콘텐츠
+  full_content: string; // 전체 콘텐츠
+  metadata: {
+    filename?: string;
+    file_size?: number;
+    upload_time?: string;
+    uploaded_by?: string;
+    chunk_index?: number;
+    total_chunks?: number;
+    [key: string]: any;
+  };
 }
 
 interface DocumentListResponse {
   documents: Document[];
-  total_count: number;
-  page: number;
-  page_size: number;
-  total_pages: number;
+  pagination: {
+    page: number;
+    page_size: number;
+    total_count: number;
+    total_pages: number;
+    has_next: boolean;
+    has_prev: boolean;
+  };
 }
 
 interface StoredFile {
@@ -73,199 +77,180 @@ const DocumentListModal: React.FC<DocumentListModalProps> = ({
   dataSourceId,
   dataSourceName
 }) => {
-  const [currentPage, setCurrentPage] = useState(1);
+  const [activeTab, setActiveTab] = useState<'documents' | 'files'>('documents');
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedDocuments, setSelectedDocuments] = useState<Set<string>>(new Set());
-  const [documents, setDocuments] = useState<Document[]>([]);
-  const [documentsData, setDocumentsData] = useState<DocumentListResponse | null>(null);
-  const [totalPages, setTotalPages] = useState(1);
-  const [storedFiles, setStoredFiles] = useState<StoredFile[]>([]);
-  const [storageStats, setStorageStats] = useState<StorageStats | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'documents' | 'files'>('documents');
-  const pageSize = 20;
+  
+  // 상태 관리
+  const [documents, setDocuments] = useState<Document[]>([]);
+  const [pagination, setPagination] = useState<any>(null);
+  const [storedFiles, setStoredFiles] = useState<StoredFile[]>([]);
+  const [storageStats, setStorageStats] = useState<StorageStats | null>(null);
+
   const queryClient = useQueryClient();
 
-  const token = localStorage.getItem('token');
-
-  // 문서 목록 조회 쿼리
-  const { data: documentsQueryData, isLoading, error: queryError } = useQuery(
-    ['documents', dataSourceId, currentPage],
-    () => ragDataSourceService.getDocuments(dataSourceId, currentPage, pageSize),
+  // 파일 목록 조회 쿼리
+  const { data: storedFilesData, isLoading, error: queryError } = useQuery(
+    ['ragDataSource', dataSourceId, 'storedFiles'],
+    () => ragDataSourceService.getStoredFiles(dataSourceId),
     {
-      enabled: isOpen && activeTab === 'documents',
+      enabled: isOpen && activeTab === 'files',
       onSuccess: (data) => {
-        setDocumentsData(data);
-        setDocuments(data.documents || []);
-        setTotalPages(data.total_pages || 1);
+        setStoredFiles(data.stored_files || []);
+        setStorageStats(data.storage_stats || null);
       },
-      onError: (err) => {
-        console.error('Error fetching documents:', err);
-        setError('문서 목록을 불러오는데 실패했습니다.');
+      onError: (err: any) => {
+        console.error('Failed to fetch stored files:', err);
+        setError('파일 목록을 불러오는데 실패했습니다.');
       }
     }
   );
 
-  // 문서 삭제 뮤테이션
+  // 문서 삭제 mutation
   const deleteDocumentMutation = useMutation(
     (documentId: string) => ragDataSourceService.deleteDocument(dataSourceId, documentId),
     {
       onSuccess: () => {
-        toast.success('문서가 삭제되었습니다.');
-        queryClient.invalidateQueries(['documents', dataSourceId]);
-        if (activeTab === 'documents') {
-          fetchDocuments();
-        }
+        queryClient.invalidateQueries(['ragDataSource', dataSourceId]);
+        fetchDocuments(); // 문서 목록 새로고침
       },
-      onError: () => {
-        toast.error('문서 삭제에 실패했습니다.');
+      onError: (error: any) => {
+        console.error('Failed to delete document:', error);
+        alert('문서 삭제에 실패했습니다.');
       }
     }
   );
 
-  useEffect(() => {
-    if (isOpen) {
-      if (activeTab === 'documents') {
-        // React Query가 자동으로 처리
-      } else {
-        fetchStoredFiles();
+  // 저장된 파일 삭제 mutation
+  const deleteStoredFileMutation = useMutation(
+    (filePath: string) => ragDataSourceService.deleteStoredFile(dataSourceId, filePath),
+    {
+      onSuccess: () => {
+        queryClient.invalidateQueries(['ragDataSource', dataSourceId, 'storedFiles']);
+      },
+      onError: (error: any) => {
+        console.error('Failed to delete stored file:', error);
+        alert('파일 삭제에 실패했습니다.');
       }
     }
-  }, [isOpen, activeTab]);
+  );
 
+  // 문서 목록 조회 함수
   const fetchDocuments = async () => {
+    if (!isOpen || activeTab !== 'documents') return;
+    
     setLoading(true);
+    setError(null);
+    
     try {
-      const response = await fetch(
-        `http://localhost:8000/api/v1/llmops/rag-datasources/${dataSourceId}/documents?page=${currentPage}&page_size=${pageSize}`,
-        {
-          headers: {
-            'Authorization': `Bearer ${token}`,
-          },
-        }
-      );
-
-      if (response.ok) {
-        const data = await response.json();
-        setDocumentsData(data);
-        setDocuments(data.documents || []);
-        setTotalPages(Math.ceil((data.total_documents || 0) / pageSize));
+      const response = await ragDataSourceService.getDocuments(dataSourceId, currentPage, 20);
+      
+      // 백엔드 응답 구조에 맞게 처리
+      if (response.documents) {
+        setDocuments(response.documents);
       } else {
-        console.error('Failed to fetch documents');
-        setError('문서 목록을 불러오는데 실패했습니다.');
+        setDocuments([]);
       }
-    } catch (error) {
-      console.error('Error fetching documents:', error);
+      
+      if (response.pagination) {
+        setPagination(response.pagination);
+      } else {
+        // 구버전 응답 구조 호환성
+        setPagination({
+          page: response.page || currentPage,
+          page_size: response.page_size || 20,
+          total_count: response.total_count || 0,
+          total_pages: response.total_pages || 1,
+          has_next: (response.page || currentPage) < (response.total_pages || 1),
+          has_prev: (response.page || currentPage) > 1
+        });
+      }
+    } catch (err: any) {
+      console.error('Failed to fetch documents:', err);
       setError('문서 목록을 불러오는데 실패했습니다.');
+      setDocuments([]);
+      setPagination(null);
     } finally {
       setLoading(false);
     }
   };
 
+  // 저장된 파일 목록 조회 함수
   const fetchStoredFiles = async () => {
+    if (!isOpen || activeTab !== 'files') return;
+    
     setLoading(true);
+    setError(null);
+    
     try {
-      const response = await fetch(
-        `http://localhost:8000/api/v1/llmops/rag-datasources/${dataSourceId}/stored-files`,
-        {
-          headers: {
-            'Authorization': `Bearer ${token}`,
-          },
-        }
-      );
-
-      if (response.ok) {
-        const data = await response.json();
-        setStoredFiles(data.stored_files || []);
-        setStorageStats(data.storage_stats || null);
-      } else {
-        console.error('Failed to fetch stored files');
-        setError('저장된 파일 목록을 불러오는데 실패했습니다.');
-      }
-    } catch (error) {
-      console.error('Error fetching stored files:', error);
-      setError('저장된 파일 목록을 불러오는데 실패했습니다.');
+      const response = await ragDataSourceService.getStoredFiles(dataSourceId);
+      setStoredFiles(response.stored_files || []);
+      setStorageStats(response.storage_stats || null);
+    } catch (err: any) {
+      console.error('Failed to fetch stored files:', err);
+      setError('파일 목록을 불러오는데 실패했습니다.');
+      setStoredFiles([]);
+      setStorageStats(null);
     } finally {
       setLoading(false);
     }
   };
 
+  // 문서 삭제
   const deleteDocument = async (documentId: string) => {
-    if (!confirm('이 문서를 삭제하시겠습니까?')) return;
+    if (!window.confirm('이 문서를 삭제하시겠습니까?')) {
+      return;
+    }
 
     try {
-      const response = await fetch(
-        `http://localhost:8000/api/v1/llmops/rag-datasources/${dataSourceId}/documents/${documentId}`,
-        {
-          method: 'DELETE',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-          },
-        }
-      );
-
-      if (response.ok) {
-        fetchDocuments();
-        toast.success('문서가 삭제되었습니다.');
-      } else {
-        toast.error('문서 삭제에 실패했습니다.');
-      }
+      await deleteDocumentMutation.mutateAsync(documentId);
+      
+      // 선택된 문서에서 제거
+      const newSelected = new Set(selectedDocuments);
+      newSelected.delete(documentId);
+      setSelectedDocuments(newSelected);
+      
     } catch (error) {
-      console.error('Error deleting document:', error);
-      toast.error('문서 삭제 중 오류가 발생했습니다.');
+      console.error('Document deletion failed:', error);
     }
   };
 
+  // 저장된 파일 삭제
   const deleteStoredFile = async (filePath: string) => {
-    if (!confirm('이 파일을 삭제하시겠습니까?')) return;
+    if (!window.confirm('이 파일을 삭제하시겠습니까?')) {
+      return;
+    }
 
     try {
-      const response = await fetch(
-        `http://localhost:8000/api/v1/llmops/rag-datasources/${dataSourceId}/stored-files?file_path=${encodeURIComponent(filePath)}`,
-        {
-          method: 'DELETE',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-          },
-        }
-      );
-
-      if (response.ok) {
-        fetchStoredFiles();
-        toast.success('파일이 삭제되었습니다.');
-      } else {
-        toast.error('파일 삭제에 실패했습니다.');
-      }
+      await deleteStoredFileMutation.mutateAsync(filePath);
     } catch (error) {
-      console.error('Error deleting stored file:', error);
-      toast.error('파일 삭제 중 오류가 발생했습니다.');
+      console.error('Stored file deletion failed:', error);
     }
   };
 
+  // 선택된 문서들 일괄 삭제
   const handleBulkDelete = async () => {
     if (selectedDocuments.size === 0) return;
-    if (!confirm(`선택된 ${selectedDocuments.size}개 항목을 삭제하시겠습니까?`)) return;
-
-    const deletePromises = Array.from(selectedDocuments).map(id => {
-      if (activeTab === 'documents') {
-        return deleteDocument(id);
-      } else {
-        const file = storedFiles.find(f => f.file_path === id);
-        return file ? deleteStoredFile(file.file_path) : Promise.resolve();
-      }
-    });
+    
+    if (!window.confirm(`선택된 ${selectedDocuments.size}개의 문서를 삭제하시겠습니까?`)) {
+      return;
+    }
 
     try {
-      await Promise.all(deletePromises);
-      setSelectedDocuments(new Set());
-      if (activeTab === 'documents') {
-        fetchDocuments();
-      } else {
-        fetchStoredFiles();
+      for (const documentId of selectedDocuments) {
+        await ragDataSourceService.deleteDocument(dataSourceId, documentId);
       }
+      
+      setSelectedDocuments(new Set());
+      fetchDocuments(); // 목록 새로고침
+      queryClient.invalidateQueries(['ragDataSource', dataSourceId]);
+      
     } catch (error) {
-      console.error('Error in bulk delete:', error);
+      console.error('Bulk deletion failed:', error);
+      alert('일부 문서 삭제에 실패했습니다.');
     }
   };
 
@@ -284,15 +269,52 @@ const DocumentListModal: React.FC<DocumentListModalProps> = ({
     return new Date(dateString).toLocaleString('ko-KR');
   };
 
-  // 필터링된 문서 목록
-  const filteredDocuments = documents?.filter(doc =>
-    doc.filename.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    doc.preview.toLowerCase().includes(searchTerm.toLowerCase())
-  ) || [];
+  // 필터링된 문서 목록 - null 체크 추가
+  const filteredDocuments = documents?.filter(doc => {
+    const filename = doc.metadata?.filename || '';
+    const content = doc.content || '';
+    const searchLower = searchTerm.toLowerCase();
+    
+    return filename.toLowerCase().includes(searchLower) ||
+           content.toLowerCase().includes(searchLower);
+  }) || [];
 
-  const filteredFiles = storedFiles.filter(file =>
-    file.filename.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filteredFiles = storedFiles.filter(file => {
+    const filename = file?.filename || '';
+    return filename.toLowerCase().includes(searchTerm.toLowerCase());
+  });
+
+  // 페이지 변경 시 문서 새로고침
+  useEffect(() => {
+    if (isOpen && activeTab === 'documents') {
+      fetchDocuments();
+    }
+  }, [isOpen, currentPage, activeTab]);
+
+  // 탭 변경 시 데이터 로드
+  useEffect(() => {
+    if (isOpen) {
+      if (activeTab === 'documents') {
+        fetchDocuments();
+      } else if (activeTab === 'files') {
+        fetchStoredFiles();
+      }
+    }
+  }, [isOpen, activeTab]);
+
+  // 모달이 닫힐 때 상태 초기화
+  useEffect(() => {
+    if (!isOpen) {
+      setSearchTerm('');
+      setSelectedDocuments(new Set());
+      setCurrentPage(1);
+      setError(null);
+      setDocuments([]);
+      setPagination(null);
+      setStoredFiles([]);
+      setStorageStats(null);
+    }
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -439,33 +461,39 @@ const DocumentListModal: React.FC<DocumentListModalProps> = ({
                           
                           <div className="flex-1 min-w-0">
                             <h3 className="font-medium text-gray-900 truncate">
-                              {doc.filename}
+                              {doc.metadata?.filename || `문서 ${doc.id}`}
                             </h3>
                             
                             <div className="flex items-center gap-4 mt-1 text-sm text-gray-500">
-                              <span className="flex items-center gap-1">
-                                <HardDrive className="w-3 h-3" />
-                                {formatFileSize(doc.file_size)}
-                              </span>
-                              <span className="flex items-center gap-1">
-                                <Clock className="w-3 h-3" />
-                                {formatDate(doc.upload_time)}
-                              </span>
-                              {doc.uploaded_by && (
+                              {doc.metadata?.file_size && (
+                                <span className="flex items-center gap-1">
+                                  <HardDrive className="w-3 h-3" />
+                                  {formatFileSize(doc.metadata.file_size)}
+                                </span>
+                              )}
+                              {doc.metadata?.upload_time && (
+                                <span className="flex items-center gap-1">
+                                  <Clock className="w-3 h-3" />
+                                  {formatDate(doc.metadata.upload_time)}
+                                </span>
+                              )}
+                              {doc.metadata?.uploaded_by && (
                                 <span className="flex items-center gap-1">
                                   <User className="w-3 h-3" />
-                                  {doc.uploaded_by}
+                                  {doc.metadata.uploaded_by}
                                 </span>
                               )}
                             </div>
                             
                             <div className="mt-2 text-sm text-gray-600">
-                              <p className="line-clamp-2">{doc.preview}</p>
+                              <p className="line-clamp-2">{doc.content || '내용이 없습니다.'}</p>
                             </div>
                             
                             <div className="mt-2 text-xs text-gray-400">
-                              청크 {doc.chunk_index + 1}/{doc.total_chunks} • 
-                              내용 길이: {doc.content_length.toLocaleString()}자
+                              {doc.metadata?.chunk_index !== undefined && doc.metadata?.total_chunks && (
+                                <span>청크 {doc.metadata.chunk_index + 1}/{doc.metadata.total_chunks} • </span>
+                              )}
+                              내용 길이: {(doc.full_content?.length || doc.content?.length || 0).toLocaleString()}자
                             </div>
                           </div>
                         </div>
@@ -482,9 +510,44 @@ const DocumentListModal: React.FC<DocumentListModalProps> = ({
                     </div>
                   ))}
                 </div>
+
+                {/* 페이지네이션 */}
+                {pagination && pagination.total_pages > 1 && (
+                  <div className="mt-6 flex items-center justify-between">
+                    <div className="text-sm text-gray-700">
+                      총 {pagination.total_count}개 문서 중 {((pagination.page - 1) * pagination.page_size) + 1}-
+                      {Math.min(pagination.page * pagination.page_size, pagination.total_count)}개 표시
+                    </div>
+                    
+                    <div className="flex items-center gap-2">
+                      {pagination.has_prev && (
+                        <button
+                          onClick={() => setCurrentPage(currentPage - 1)}
+                          className="px-3 py-1 border border-gray-300 rounded hover:bg-gray-50"
+                        >
+                          이전
+                        </button>
+                      )}
+                      
+                      <span className="px-3 py-1">
+                        {pagination.page} / {pagination.total_pages}
+                      </span>
+                      
+                      {pagination.has_next && (
+                        <button
+                          onClick={() => setCurrentPage(currentPage + 1)}
+                          className="px-3 py-1 border border-gray-300 rounded hover:bg-gray-50"
+                        >
+                          다음
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
             )
           ) : (
+            // 파일 목록 탭
             filteredFiles.length === 0 ? (
               <div className="flex items-center justify-center h-full">
                 <div className="text-center text-gray-500">
@@ -498,28 +561,11 @@ const DocumentListModal: React.FC<DocumentListModalProps> = ({
                   {filteredFiles.map((file) => (
                     <div
                       key={file.file_path}
-                      className={`border rounded-lg p-4 hover:shadow-md transition-shadow ${
-                        selectedDocuments.has(file.file_path) ? 'border-blue-500 bg-blue-50' : 'border-gray-200'
-                      }`}
+                      className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow"
                     >
                       <div className="flex items-start justify-between">
                         <div className="flex items-start gap-3 flex-1">
-                          <input
-                            type="checkbox"
-                            checked={selectedDocuments.has(file.file_path)}
-                            onChange={(e) => {
-                              const newSelected = new Set(selectedDocuments);
-                              if (e.target.checked) {
-                                newSelected.add(file.file_path);
-                              } else {
-                                newSelected.delete(file.file_path);
-                              }
-                              setSelectedDocuments(newSelected);
-                            }}
-                            className="mt-1"
-                          />
-                          
-                          <File className="w-5 h-5 text-gray-400 flex-shrink-0" />
+                          <File className="w-5 h-5 text-green-600 mt-1 flex-shrink-0" />
                           
                           <div className="flex-1 min-w-0">
                             <h3 className="font-medium text-gray-900 truncate">
@@ -545,7 +591,8 @@ const DocumentListModal: React.FC<DocumentListModalProps> = ({
                         
                         <button
                           onClick={() => deleteStoredFile(file.file_path)}
-                          className="ml-4 p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                          disabled={deleteStoredFileMutation.isLoading}
+                          className="ml-4 p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
                           title="파일 삭제"
                         >
                           <Trash2 className="w-4 h-4" />
@@ -558,40 +605,6 @@ const DocumentListModal: React.FC<DocumentListModalProps> = ({
             )
           )}
         </div>
-
-        {/* 페이지네이션 */}
-        {activeTab === 'documents' && documentsData && documentsData.total_pages > 1 && (
-          <div className="p-4 border-t bg-gray-50">
-            <div className="flex items-center justify-between">
-              <div className="text-sm text-gray-600">
-                총 {documentsData.total_count}개 문서 중 {((currentPage - 1) * pageSize) + 1}-
-                {Math.min(currentPage * pageSize, documentsData.total_count)}개 표시
-              </div>
-              
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
-                  disabled={currentPage === 1}
-                  className="p-2 border border-gray-300 rounded-lg hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <ChevronLeft className="w-4 h-4" />
-                </button>
-                
-                <span className="px-3 py-1 text-sm">
-                  {currentPage} / {documentsData.total_pages}
-                </span>
-                
-                <button
-                  onClick={() => setCurrentPage(prev => Math.min(documentsData.total_pages, prev + 1))}
-                  disabled={currentPage === documentsData.total_pages}
-                  className="p-2 border border-gray-300 rounded-lg hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <ChevronRight className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
     </div>
   );

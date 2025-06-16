@@ -206,6 +206,47 @@ class RAGDataSourceService {
       throw error;
     }
   }
+
+  /**
+   * 저장된 파일 목록 조회
+   */
+  async getStoredFiles(dataSourceId: number): Promise<any> {
+    try {
+      const response = await axios.get(`${API_BASE_URL}/rag-datasources/${dataSourceId}/stored-files`);
+      return response.data;
+    } catch (error) {
+      console.error(`Failed to get stored files from data source ${dataSourceId}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * 저장된 파일 삭제
+   */
+  async deleteStoredFile(dataSourceId: number, filePath: string): Promise<any> {
+    try {
+      const response = await axios.delete(`${API_BASE_URL}/rag-datasources/${dataSourceId}/stored-files`, {
+        params: { file_path: filePath }
+      });
+      return response.data;
+    } catch (error) {
+      console.error(`Failed to delete stored file ${filePath} from data source ${dataSourceId}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * 데이터소스의 모든 문서 삭제
+   */
+  async clearDataSourceDocuments(dataSourceId: number): Promise<any> {
+    try {
+      const response = await axios.delete(`${API_BASE_URL}/rag-datasources/${dataSourceId}/documents`);
+      return response.data;
+    } catch (error) {
+      console.error(`Failed to clear documents from data source ${dataSourceId}:`, error);
+      throw error;
+    }
+  }
 }
 
 // 싱글톤 인스턴스 생성

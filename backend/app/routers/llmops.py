@@ -15,6 +15,7 @@ import uuid
 from ..database import get_db
 from ..models import User
 from .auth import get_current_user
+from ..services.chroma_service import get_chroma_service
 
 router = APIRouter()
 security = HTTPBearer()
@@ -377,4 +378,40 @@ async def cleanup_user_processes():
         "cleaned_up": cleanup_count,
         "active_processes": len(langflow_processes),
         "message": f"{cleanup_count}개의 죽은 프로세스를 정리했습니다."
-    } 
+    }
+
+@router.get("/llmops/rag-collections")
+async def get_rag_collections(
+    current_user: User = Depends(get_current_user)
+):
+    """사용자가 접근 가능한 RAG Collection 목록 조회"""
+    try:
+        chroma_service = get_chroma_service()
+        
+        # 사용자 소유 컬렉션 조회
+        user_collections = await chroma_service.get_collections_by_owner("user", str(current_user.id))
+        
+        # 응답 형식 변환
+        collections = []
+        for collection in user_collections:
+            collections.append({
+                "value": collection.id,
+                "label": collection.name,
+                "description": collection.description or f"사용자 {current_user.display_name or current_user.real_name}의 컬렉션",
+                "owner_type": "user",
+                "owner_id": str(current_user.id),
+                "created_at": collection.created_at,
+                "document_count": getattr(collection, 'document_count', 0)
+            })
+        
+        # TODO: 그룹 권한 기반 컬렉션도 추가
+        # group_collections = await chroma_service.get_collections_by_group(current_user.groups)
+        
+        return {
+            "collections": collections,
+            "total_count": len(collections)
+        }
+        
+    except Exception as e:
+        logging.error(f"RAG 컬렉션 목록 조회 실패: {e}")
+        raise HTTPException(status_code=500, detail="RAG 컬렉션 목록을 가져올 수 없습니다.") 

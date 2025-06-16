@@ -1,7 +1,7 @@
 {
-  "name": "mai-x-frontend",
+  "name": "MAX-frontend",
   "version": "0.1.0",
-  "description": "MAI-X - Manufacturing Artificial Intelligence & DX Platform Frontend",
+  "description": "MAX - Manufacturing Artificial Intelligence & DX Platform Frontend",
   "private": true,
   "dependencies": {
     "@xyflow/react": "^12.6.0",

@@ -10,10 +10,13 @@ import json
 import argparse
 import logging
 import asyncio
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, AsyncGenerator
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+
+from .graph_builder import GraphBuilder
 
 # 로깅 설정
 logging.basicConfig(
@@ -107,35 +110,24 @@ class StatefulWorker:
     
     def _create_flow_instance(self, flow_data: Dict[str, Any]) -> Optional[Any]:
         """
-        플로우 데이터로부터 실행 가능한 플로우 인스턴스 생성
+        플로우 데이터로부터 실행 가능한 LCEL 체인 생성
         
         Args:
             flow_data: 플로우 JSON 데이터
             
         Returns:
-            플로우 인스턴스 또는 None
+            실행 가능한 LCEL 체인 또는 None
         """
         try:
-            # 실제로는 langflow 라이브러리를 사용하여 플로우 인스턴스 생성
-            # 여기서는 시연용으로 간단한 구조체 생성
+            # GraphBuilder를 사용하여 LCEL 체인 생성
+            builder = GraphBuilder(flow_data)
+            chain = builder.build()
             
-            # langflow.load.load_flow_from_json 같은 함수가 있다고 가정
-            # from langflow import load
-            # flow_instance = load.load_flow_from_json(flow_data=flow_data)
-            
-            # 시연용 - 실제 구현에서는 langflow 사용
-            mock_flow_instance = {
-                "id": self.flow_id,
-                "project_id": self.project_id,
-                "data": flow_data,
-                "status": "ready"
-            }
-            
-            logger.info("플로우 인스턴스 생성 완료")
-            return mock_flow_instance
+            logger.info("LCEL 체인 생성 완료")
+            return chain
             
         except Exception as e:
-            logger.error(f"플로우 인스턴스 생성 실패: {e}")
+            logger.error(f"LCEL 체인 생성 실패: {e}")
             return None
     
     def _setup_routes(self):
@@ -151,9 +143,9 @@ class StatefulWorker:
                 "flow_loaded": self.flow_instance is not None
             }
         
-        @self.app.post("/execute", response_model=FlowExecutionResponse)
+        @self.app.post("/execute")
         async def execute_flow(request: FlowExecutionRequest):
-            """플로우 실행 엔드포인트"""
+            """플로우 실행 엔드포인트 (스트리밍 지원)"""
             import time
             start_time = time.time()
             
@@ -164,19 +156,30 @@ class StatefulWorker:
                         detail="플로우가 로드되지 않았습니다"
                     )
                 
-                # 실제 플로우 실행 로직
-                result = await self._execute_flow_logic(
-                    request.input_data, 
-                    request.parameters
-                )
+                # 스트리밍 요청 확인
+                stream = request.parameters.get('stream', False) if request.parameters else False
                 
-                execution_time = time.time() - start_time
-                
-                return FlowExecutionResponse(
-                    success=True,
-                    result=result,
-                    execution_time=execution_time
-                )
+                if stream:
+                    # 스트리밍 응답
+                    return StreamingResponse(
+                        self._execute_flow_stream(request.input_data, request.parameters),
+                        media_type="text/plain",
+                        headers={"X-Flow-ID": self.flow_id}
+                    )
+                else:
+                    # 일반 응답
+                    result = await self._execute_flow_logic(
+                        request.input_data, 
+                        request.parameters
+                    )
+                    
+                    execution_time = time.time() - start_time
+                    
+                    return FlowExecutionResponse(
+                        success=True,
+                        result=result,
+                        execution_time=execution_time
+                    )
                 
             except Exception as e:
                 execution_time = time.time() - start_time
@@ -204,7 +207,7 @@ class StatefulWorker:
         parameters: Optional[Dict[str, Any]]
     ) -> Dict[str, Any]:
         """
-        실제 플로우 실행 로직
+        실제 LCEL 체인 실행 로직
         
         Args:
             input_data: 입력 데이터
@@ -214,25 +217,187 @@ class StatefulWorker:
             실행 결과
         """
         try:
-            # 실제로는 langflow의 플로우 실행 로직 호출
-            # result = await self.flow_instance.run(input_data=input_data, **parameters)
+            # 입력 데이터 준비
+            chain_input = input_data or {}
             
-            # 시연용 - 실제 구현에서는 langflow 사용
-            await asyncio.sleep(0.1)  # 시뮬레이션
+            # 텍스트 입력이 있는 경우 처리
+            if isinstance(input_data, dict) and 'text' in input_data:
+                chain_input = {"input": input_data['text']}
+            elif isinstance(input_data, str):
+                chain_input = {"input": input_data}
+            elif not chain_input:
+                chain_input = {"input": ""}
             
-            result = {
-                "message": f"플로우 {self.flow_id} 실행 완료",
-                "input_received": input_data,
-                "parameters_received": parameters,
-                "processed_at": asyncio.get_event_loop().time()
-            }
+            # 파라미터 병합
+            if parameters:
+                chain_input.update(parameters)
+            
+            # LCEL 체인 실행
+            try:
+                # 비동기 invoke 시도 (ainvoke가 있는 경우)
+                if hasattr(self.flow_instance, 'ainvoke'):
+                    result = await self.flow_instance.ainvoke(chain_input)
+                else:
+                    # 동기 invoke 사용
+                    result = self.flow_instance.invoke(chain_input)
+            except AttributeError:
+                # invoke 메서드가 없는 경우 직접 호출
+                if callable(self.flow_instance):
+                    result = self.flow_instance(chain_input)
+                else:
+                    raise ValueError("플로우 인스턴스를 실행할 수 없습니다")
+            
+            # 결과 포맷팅
+            formatted_result = self._format_execution_result(result, input_data, parameters)
             
             logger.info(f"플로우 실행 완료: {self.flow_id}")
-            return result
+            return formatted_result
             
         except Exception as e:
             logger.error(f"플로우 실행 로직 실패: {e}")
             raise
+    
+    def _format_execution_result(
+        self, 
+        chain_result: Any, 
+        original_input: Optional[Dict[str, Any]], 
+        parameters: Optional[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """
+        체인 실행 결과를 포맷팅합니다.
+        
+        Args:
+            chain_result: 체인 실행 결과
+            original_input: 원본 입력 데이터
+            parameters: 실행 파라미터
+            
+        Returns:
+            포맷팅된 결과 딕셔너리
+        """
+        try:
+            # 기본 결과 구조
+            result = {
+                "flow_id": self.flow_id,
+                "project_id": self.project_id,
+                "success": True,
+                "timestamp": asyncio.get_event_loop().time()
+            }
+            
+            # 체인 결과 처리
+            if isinstance(chain_result, dict):
+                # 딕셔너리 결과인 경우
+                if 'content' in chain_result:
+                    result["output"] = chain_result['content']
+                    result["metadata"] = {k: v for k, v in chain_result.items() if k != 'content'}
+                else:
+                    result["output"] = chain_result
+            elif isinstance(chain_result, str):
+                # 문자열 결과인 경우
+                result["output"] = chain_result
+            else:
+                # 기타 타입인 경우
+                result["output"] = str(chain_result)
+            
+            # 디버그 정보 (선택적)
+            if logger.level <= logging.DEBUG:
+                result["debug"] = {
+                    "input_received": original_input,
+                    "parameters_received": parameters,
+                    "chain_result_type": type(chain_result).__name__
+                }
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"결과 포맷팅 실패: {e}")
+            return {
+                "flow_id": self.flow_id,
+                "project_id": self.project_id,
+                "success": False,
+                "error": f"결과 포맷팅 실패: {e}",
+                "raw_result": str(chain_result)
+            }
+    
+    async def _execute_flow_stream(
+        self, 
+        input_data: Optional[Dict[str, Any]], 
+        parameters: Optional[Dict[str, Any]]
+    ) -> AsyncGenerator[str, None]:
+        """
+        스트리밍 방식으로 플로우를 실행합니다.
+        
+        Args:
+            input_data: 입력 데이터
+            parameters: 실행 파라미터
+            
+        Yields:
+            실행 결과 청크들
+        """
+        try:
+            # 시작 메시지
+            yield f"data: {json.dumps({'type': 'start', 'flow_id': self.flow_id})}\n\n"
+            
+            # 입력 데이터 준비
+            chain_input = input_data or {}
+            
+            if isinstance(input_data, dict) and 'text' in input_data:
+                chain_input = {"input": input_data['text']}
+            elif isinstance(input_data, str):
+                chain_input = {"input": input_data}
+            elif not chain_input:
+                chain_input = {"input": ""}
+            
+            if parameters:
+                chain_input.update(parameters)
+            
+            # 스트리밍 실행 시도
+            try:
+                # astream 메서드가 있는 경우 (LangChain 스트리밍)
+                if hasattr(self.flow_instance, 'astream'):
+                    async for chunk in self.flow_instance.astream(chain_input):
+                        chunk_data = {
+                            'type': 'chunk',
+                            'data': chunk if isinstance(chunk, (str, dict)) else str(chunk)
+                        }
+                        yield f"data: {json.dumps(chunk_data)}\n\n"
+                
+                # stream 메서드가 있는 경우 (동기 스트리밍)
+                elif hasattr(self.flow_instance, 'stream'):
+                    for chunk in self.flow_instance.stream(chain_input):
+                        chunk_data = {
+                            'type': 'chunk',
+                            'data': chunk if isinstance(chunk, (str, dict)) else str(chunk)
+                        }
+                        yield f"data: {json.dumps(chunk_data)}\n\n"
+                        await asyncio.sleep(0)  # 비동기 처리를 위한 양보
+                
+                else:
+                    # 스트리밍을 지원하지 않는 경우 일반 실행
+                    result = await self._execute_flow_logic(input_data, parameters)
+                    result_data = {
+                        'type': 'result',
+                        'data': result
+                    }
+                    yield f"data: {json.dumps(result_data)}\n\n"
+            
+            except Exception as execution_error:
+                error_data = {
+                    'type': 'error',
+                    'error': str(execution_error)
+                }
+                yield f"data: {json.dumps(error_data)}\n\n"
+                raise
+            
+            # 완료 메시지
+            yield f"data: {json.dumps({'type': 'complete'})}\n\n"
+            
+        except Exception as e:
+            logger.error(f"스트리밍 실행 실패: {e}")
+            error_data = {
+                'type': 'error',
+                'error': str(e)
+            }
+            yield f"data: {json.dumps(error_data)}\n\n"
     
     async def start_server(self):
         """FastAPI 서버 시작"""

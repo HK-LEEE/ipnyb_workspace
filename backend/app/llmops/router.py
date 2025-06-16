@@ -103,7 +103,7 @@ async def create_rag_datasource(
         else:
             owner_id = str(current_user.id)
         
-        datasource = service.create_datasource(
+        datasource = await service.create_datasource(
             name=request.name,
             description=request.description,
             owner_type=request.owner_type,
@@ -148,6 +148,47 @@ async def get_rag_datasources(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="데이터소스 목록 조회 중 오류가 발생했습니다."
+        )
+
+@router.get("/rag-collections")
+async def get_rag_collections_for_flowstudio(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """FlowStudio RAG 컴포넌트용 Collection 목록 조회 (Select 옵션 형태)"""
+    try:
+        service = RAGDataSourceService(db)
+        datasources = service.get_datasource_list(current_user)
+        
+        # Collection 옵션 형태로 변환
+        collections = []
+        for datasource in datasources:
+            # datasource는 get_datasource_list에서 반환된 dict 형태
+            # 실제 RAGDataSource 객체를 가져와서 chroma_collection_name을 얻어야 함
+            from .auth import LLMOpsAuthService
+            auth_service = LLMOpsAuthService(db)
+            datasource_obj = auth_service.get_rag_datasource_with_permission(datasource["id"], current_user)
+            
+            collections.append({
+                "value": datasource_obj.chroma_collection_name,  # 실제 Chroma collection name
+                "label": f"{datasource['name']} ({datasource['document_count']}개 문서)",
+                "description": datasource.get('description', ''),
+                "owner_type": datasource["owner"]["type"],  # owner는 dict 형태
+                "owner_id": datasource_obj.owner_id,
+                "document_count": datasource["document_count"],
+                "is_active": datasource["is_active"]
+            })
+        
+        return {
+            "collections": collections,
+            "total_count": len(collections)
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting RAG collections for FlowStudio: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="RAG Collection 목록 조회 중 오류가 발생했습니다."
         )
 
 @router.get("/rag-datasources/{source_id}")
@@ -233,7 +274,7 @@ async def query_datasource(
         datasource = auth_service.get_rag_datasource_with_permission(source_id, current_user)
         
         service = RAGDataSourceService(db)
-        results = service.query_documents(
+        results = await service.query_documents(
             datasource, 
             request.query, 
             request.n_results
@@ -296,7 +337,7 @@ async def delete_rag_datasource(
         datasource = auth_service.get_rag_datasource_with_permission(source_id, current_user)
         
         service = RAGDataSourceService(db)
-        success = service.delete_datasource(datasource, current_user)
+        success = await service.delete_datasource(datasource, current_user)
         
         if success:
             return {
@@ -1288,6 +1329,344 @@ async def cleanup_workers(
             detail=f"워커 정리 중 오류가 발생했습니다: {str(e)}"
         )
 
+class FlowExecuteRequest(BaseModel):
+    """플로우 실행 요청 모델"""
+    input_data: Dict[str, Any]
+    parameters: Optional[Dict[str, Any]] = None
+    stream: bool = False
+
+class FlowTestRequest(BaseModel):
+    """플로우 테스트 실행 요청 모델"""
+    flow_data: Dict[str, Any]  # 노드와 엣지 정보
+    input_data: Dict[str, Any]
+    parameters: Optional[Dict[str, Any]] = None
+    stream: bool = False
+
+@router.post("/run-flow/{flow_id}")
+async def run_flow_published(
+    flow_id: str,
+    request: FlowExecuteRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    게시된 플로우 실행 엔드포인트 (권한 기반)
+    Flow Studio에서 게시된 플로우를 권한 검사 후 실행
+    
+    Args:
+        flow_id: 플로우 ID (Flow Studio)
+        request: 플로우 실행 요청
+        current_user: 현재 사용자
+        db: 데이터베이스 세션
+        
+    Returns:
+        플로우 실행 결과 또는 스트리밍 응답
+    """
+    try:
+        logger.info(f"게시된 플로우 실행 요청: {flow_id} - 사용자: {current_user.email}")
+        
+        # 사용자 그룹 정보 조회
+        user_groups = [group.name for group in current_user.groups] if current_user.groups else []
+        
+        # 워커 가져오기 또는 생성 (권한 검사 포함)
+        worker_result = await worker_manager.get_or_create_worker(
+            project_id="published",  # 게시된 플로우는 프로젝트 ID를 "published"로 설정
+            flow_id=flow_id,
+            user_id=str(current_user.id),
+            user_groups=user_groups
+        )
+        
+        if worker_result is None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="해당 플로우에 대한 실행 권한이 없거나 플로우를 찾을 수 없습니다."
+            )
+        
+        worker_url, worker_port = worker_result
+        
+        # 워커에 플로우 실행 요청
+        import httpx
+        
+        execution_params = request.parameters or {}
+        execution_params.update({
+            "user_id": current_user.id,
+            "user_email": current_user.email,
+            "user_name": current_user.real_name or current_user.display_name or current_user.email,
+            "stream": request.stream
+        })
+        
+        if request.stream:
+            # 스트리밍 응답
+            from fastapi.responses import StreamingResponse
+            
+            async def stream_proxy():
+                async with httpx.AsyncClient() as client:
+                    async with client.stream(
+                        "POST",
+                        f"{worker_url}/execute",
+                        json={
+                            "input_data": request.input_data,
+                            "parameters": execution_params
+                        },
+                        timeout=120.0
+                    ) as response:
+                        if response.status_code != 200:
+                            yield f"data: {{'type': 'error', 'error': '워커 실행 실패: {response.status_code}'}}\n\n"
+                            return
+                        
+                        async for chunk in response.aiter_text():
+                            yield chunk
+            
+            return StreamingResponse(
+                stream_proxy(),
+                media_type="text/plain",
+                headers={
+                    "X-Flow-ID": flow_id,
+                    "X-Worker-Port": str(worker_port),
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive"
+                }
+            )
+        else:
+            # 일반 응답
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    f"{worker_url}/execute",
+                    json={
+                        "input_data": request.input_data,
+                        "parameters": execution_params
+                    },
+                    timeout=120.0
+                )
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    logger.info(f"플로우 실행 완료: {flow_id}")
+                    
+                    return {
+                        "success": True,
+                        "flow_id": flow_id,
+                        "worker_port": worker_port,
+                        "result": result,
+                        "timestamp": datetime.utcnow().isoformat()
+                    }
+                else:
+                    logger.error(f"워커 플로우 실행 실패: {response.status_code} - {response.text}")
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail="플로우 실행 중 오류가 발생했습니다."
+                    )
+                
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"게시된 플로우 실행 실패: {flow_id} - {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"플로우 실행 중 오류가 발생했습니다: {str(e)}"
+        )
+
+@router.post("/test-flow")
+async def test_flow_execution(
+    request: FlowTestRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """
+    플로우 테스트 실행 엔드포인트 (Flow Studio 내부 테스트용)
+    저장되지 않은 플로우를 임시로 실행하여 테스트
+    
+    Args:
+        request: 플로우 테스트 요청 (flow_data, input_data 포함)
+        current_user: 현재 사용자
+        
+    Returns:
+        플로우 실행 결과 또는 스트리밍 응답
+    """
+    try:
+        logger.info(f"플로우 테스트 실행 요청 - 사용자: {current_user.email}")
+        
+        # 디버깅을 위한 플로우 데이터 구조 로깅
+        import json
+        logger.info(f"플로우 데이터 구조: {json.dumps(request.flow_data, indent=2, ensure_ascii=False)}")
+        
+        # GraphBuilder를 직접 사용하여 테스트 실행
+        from .graph_builder import GraphBuilder
+        
+        # 플로우 데이터 검증
+        if not request.flow_data or 'nodes' not in request.flow_data or 'edges' not in request.flow_data:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="유효하지 않은 플로우 데이터입니다. nodes와 edges가 필요합니다."
+            )
+        
+        # GraphBuilder로 체인 생성
+        builder = GraphBuilder(request.flow_data)
+        chain = builder.build()
+        
+        if chain is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="플로우를 실행 가능한 체인으로 변환할 수 없습니다."
+            )
+        
+        # 입력 데이터 준비
+        chain_input = request.input_data or {}
+        
+        # 텍스트 입력이 있는 경우 처리
+        if isinstance(request.input_data, dict) and 'text' in request.input_data:
+            chain_input = {"input": request.input_data['text']}
+        elif isinstance(request.input_data, str):
+            chain_input = {"input": request.input_data}
+        elif not chain_input:
+            chain_input = {"input": ""}
+        
+        # 파라미터 병합
+        if request.parameters:
+            chain_input.update(request.parameters)
+        
+        # 사용자 정보 추가
+        chain_input.update({
+            "user_id": current_user.id,
+            "user_email": current_user.email,
+            "user_name": current_user.real_name or current_user.display_name or current_user.email
+        })
+        
+        if request.stream:
+            # 스트리밍 응답
+            from fastapi.responses import StreamingResponse
+            import json
+            import asyncio
+            
+            async def stream_test_execution():
+                try:
+                    # 시작 메시지
+                    yield f"data: {json.dumps({'type': 'start', 'message': '플로우 테스트 시작'})}\n\n"
+                    
+                    # 노드 정보를 기반으로 실행 단계 정보 생성
+                    nodes = request.flow_data.get('nodes', [])
+                    step_info = []
+                    for i, node in enumerate(nodes):
+                        node_data = node.get('data', {})
+                        step_info.append({
+                            'step_index': i,
+                            'node_id': node.get('id'),
+                            'node_name': node_data.get('title', node_data.get('name', f'Node {i+1}')),
+                            'node_type': node_data.get('category', 'unknown'),
+                            'component_type': node_data.get('type', 'unknown')
+                        })
+                    
+                    # 실행 단계 정보 전송
+                    yield f"data: {json.dumps({'type': 'steps', 'steps': step_info})}\n\n"
+                    
+                    # 각 단계별로 시작 알림
+                    step_start_times = {}
+                    for step in step_info:
+                        step_start_time = datetime.utcnow()
+                        step_start_times[step['node_id']] = step_start_time
+                        step_data = {**step, 'start_time': step_start_time.isoformat()}
+                        yield f"data: {json.dumps({'type': 'step_start', 'step': step_data})}\n\n"
+                        await asyncio.sleep(0.1)  # 단계별 지연
+                    
+                    # 스트리밍 실행 시도
+                    if hasattr(chain, 'astream'):
+                        async for chunk in chain.astream(chain_input):
+                            chunk_data = {
+                                'type': 'chunk',
+                                'data': chunk if isinstance(chunk, (str, dict)) else str(chunk)
+                            }
+                            yield f"data: {json.dumps(chunk_data)}\n\n"
+                    elif hasattr(chain, 'stream'):
+                        for chunk in chain.stream(chain_input):
+                            chunk_data = {
+                                'type': 'chunk',
+                                'data': chunk if isinstance(chunk, (str, dict)) else str(chunk)
+                            }
+                            yield f"data: {json.dumps(chunk_data)}\n\n"
+                            await asyncio.sleep(0)
+                    else:
+                        # 스트리밍을 지원하지 않는 경우 일반 실행
+                        if hasattr(chain, 'ainvoke'):
+                            result = await chain.ainvoke(chain_input)
+                        else:
+                            result = chain.invoke(chain_input)
+                        
+                        result_data = {
+                            'type': 'result',
+                            'data': result if isinstance(result, (str, dict)) else str(result)
+                        }
+                        yield f"data: {json.dumps(result_data)}\n\n"
+                    
+                    # 각 단계별로 완료 알림
+                    for step in step_info:
+                        step_end_time = datetime.utcnow()
+                        start_time = step_start_times.get(step['node_id'])
+                        duration_ms = 0
+                        if start_time:
+                            duration_ms = int((step_end_time - start_time).total_seconds() * 1000)
+                        
+                        step_data = {
+                            **step, 
+                            'end_time': step_end_time.isoformat(),
+                            'duration_ms': duration_ms
+                        }
+                        yield f"data: {json.dumps({'type': 'step_complete', 'step': step_data})}\n\n"
+                        await asyncio.sleep(0.1)  # 단계별 지연
+                    
+                    # 완료 메시지
+                    yield f"data: {json.dumps({'type': 'complete', 'message': '플로우 테스트 완료'})}\n\n"
+                    
+                except Exception as e:
+                    error_data = {
+                        'type': 'error',
+                        'error': str(e)
+                    }
+                    yield f"data: {json.dumps(error_data)}\n\n"
+            
+            return StreamingResponse(
+                stream_test_execution(),
+                media_type="text/plain",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive"
+                }
+            )
+        else:
+            # 일반 응답
+            try:
+                # 체인 실행
+                if hasattr(chain, 'ainvoke'):
+                    result = await chain.ainvoke(chain_input)
+                else:
+                    result = chain.invoke(chain_input)
+                
+                # 결과 포맷팅
+                formatted_result = {
+                    "success": True,
+                    "result": result if isinstance(result, (str, dict)) else str(result),
+                    "input": chain_input,
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "execution_type": "test"
+                }
+                
+                logger.info(f"플로우 테스트 실행 완료 - 사용자: {current_user.email}")
+                return formatted_result
+                
+            except Exception as execution_error:
+                logger.error(f"플로우 테스트 실행 실패: {execution_error}")
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"플로우 실행 중 오류가 발생했습니다: {str(execution_error)}"
+                )
+                
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"플로우 테스트 요청 처리 실패: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"플로우 테스트 중 오류가 발생했습니다: {str(e)}"
+        )
+
 @router.post("/run/{project_id}/{flow_id}")
 async def run_flow_worker(
     project_id: str,
@@ -1296,7 +1675,7 @@ async def run_flow_worker(
     current_user: User = Depends(get_current_user)
 ):
     """
-    플로우 실행 엔드포인트 (워커 기반)
+    플로우 실행 엔드포인트 (워커 기반) - Legacy 지원
     WorkerPoolManager를 통해 워커를 가져오거나 생성하고 플로우를 실행
     
     Args:
@@ -1309,10 +1688,18 @@ async def run_flow_worker(
         플로우 실행 결과
     """
     try:
-        logger.info(f"플로우 실행 요청: {project_id}/{flow_id} - 사용자: {current_user.username}")
+        logger.info(f"레거시 플로우 실행 요청: {project_id}/{flow_id} - 사용자: {current_user.email}")
         
-        # 워커 가져오기 또는 생성
-        worker_result = await worker_manager.get_or_create_worker(project_id, flow_id)
+        # 사용자 그룹 정보 조회
+        user_groups = [group.name for group in current_user.groups] if current_user.groups else []
+        
+        # 워커 가져오기 또는 생성 (업데이트된 시그니처 사용)
+        worker_result = await worker_manager.get_or_create_worker(
+            project_id=project_id,
+            flow_id=flow_id,
+            user_id=str(current_user.id),
+            user_groups=user_groups
+        )
         
         if worker_result is None:
             raise HTTPException(
@@ -1332,7 +1719,8 @@ async def run_flow_worker(
                     "input_data": input_data,
                     "parameters": {
                         "user_id": current_user.id,
-                        "username": current_user.username
+                        "user_email": current_user.email,
+                        "user_name": current_user.real_name or current_user.display_name or current_user.email
                     }
                 },
                 timeout=60.0

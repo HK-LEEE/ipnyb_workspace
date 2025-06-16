@@ -722,7 +722,7 @@ const MainPage: React.FC = () => {
               <span className="text-white text-2xl font-bold">G</span>
             </div>
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
-            <p className="text-gray-600 font-medium">MAI-X 로딩 중...</p>
+            <p className="text-gray-600 font-medium">MAX 로딩 중...</p>
           </div>
         </div>
       </div>
@@ -793,7 +793,7 @@ const MainPage: React.FC = () => {
                     <span className="text-white text-xl font-bold">G</span>
                   </div>
                   <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
-                    MAI-X
+                    MAX
                   </h1>
                 </div>
                 

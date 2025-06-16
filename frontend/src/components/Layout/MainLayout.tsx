@@ -58,7 +58,7 @@ const MainLayout: React.FC = () => {
                 </div>
               </div>
               <div>
-                <h1 className="text-xl font-bold text-gray-900 font-display">MAI-X</h1>
+                <h1 className="text-xl font-bold text-gray-900 font-display">MAX</h1>
                 <p className="text-xs text-gray-500">Manufacturing AI & DX</p>
               </div>
             </div>

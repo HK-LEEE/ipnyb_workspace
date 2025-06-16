@@ -1,6 +1,6 @@
-# MAI-X (Manufacturing Artificial Intelligence & DX)
+# MAX (Manufacturing Artificial Intelligence & DX)
 
-**MAI-X**는 제조업을 위한 차세대 AI 및 디지털 트랜스포메이션 플랫폼입니다.
+**MAX**는 제조업을 위한 차세대 AI 및 디지털 트랜스포메이션 플랫폼입니다.
 
 ## 🚀 주요 기능
 
@@ -62,8 +62,8 @@
 
 ### 1. 저장소 클론
 ```bash
-git clone https://github.com/your-org/mai-x.git
-cd mai-x
+git clone https://github.com/your-org/MAX.git
+cd MAX
 ```
 
 ### 2. 백엔드 설정
@@ -99,7 +99,7 @@ npm start
 ## 📁 프로젝트 구조
 
 ```
-mai-x/
+MAX/
 ├── frontend/                 # React 프론트엔드
 │   ├── src/
 │   │   ├── components/      # 재사용 가능한 컴포넌트
@@ -171,9 +171,9 @@ ALGORITHM=HS256
 
 ## 📞 연락처
 
-- **프로젝트 링크**: [https://github.com/your-org/mai-x](https://github.com/your-org/mai-x)
-- **이슈 리포트**: [https://github.com/your-org/mai-x/issues](https://github.com/your-org/mai-x/issues)
+- **프로젝트 링크**: [https://github.com/your-org/MAX](https://github.com/your-org/MAX)
+- **이슈 리포트**: [https://github.com/your-org/MAX/issues](https://github.com/your-org/MAX/issues)
 
 ---
 
-**MAI-X** - Manufacturing의 미래를 AI와 함께 만들어갑니다. 🚀
+**MAX** - Manufacturing의 미래를 AI와 함께 만들어갑니다. 🚀

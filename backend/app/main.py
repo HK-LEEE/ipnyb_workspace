@@ -25,7 +25,7 @@ from .routers import flow_studio
 
 # FastAPI 앱 생성
 app = FastAPI(
-    title="MAI-X API",
+    title="MAX API",
     description="Manufacturing Artificial Intelligence & DX Platform API",
     version="1.0.0",
     docs_url="/docs",

@@ -112,7 +112,13 @@ class LLMOpsAuthService:
             ).first()
             
             if not datasource:
-                logger.warning(f"RAG datasource {source_id} not found or inactive")
+                # 더 자세한 디버깅 정보 추가
+                all_datasources = self.db.query(RAGDataSource).all()
+                active_datasources = self.db.query(RAGDataSource).filter(RAGDataSource.is_active == True).all()
+                logger.warning(f"RAG datasource {source_id} not found or inactive. "
+                             f"Total datasources: {len(all_datasources)}, "
+                             f"Active datasources: {len(active_datasources)}, "
+                             f"Active IDs: {[ds.id for ds in active_datasources]}")
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="데이터소스를 찾을 수 없습니다."

@@ -6,7 +6,7 @@ module.exports = {
   theme: {
     extend: {
       colors: {
-        // MAI-X 2025 모던 블랙 & 화이트 테마
+        // MAX 2025 모던 블랙 & 화이트 테마
         primary: {
           50: '#fafafa',   // 거의 흰색
           100: '#f5f5f5',  // 매우 연한 회색

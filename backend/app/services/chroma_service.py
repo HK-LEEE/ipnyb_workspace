@@ -81,11 +81,8 @@ class ChromaService:
         try:
             self.client.get_collection(name=self.metadata_collection_name)
         except:
-            # 메타데이터 컬렉션이 없으면 생성
-            self.client.create_collection(
-                name=self.metadata_collection_name,
-                metadata={"description": "Collection metadata storage"}
-            )
+            # 메타데이터 컬렉션이 없으면 생성 (기본 설정으로)
+            self.client.create_collection(name=self.metadata_collection_name)
     
     def _get_collection_metadata(self, collection_name: str) -> Dict[str, Any]:
         """컬렉션 메타데이터 조회"""
@@ -421,20 +418,26 @@ class ChromaService:
     async def create_collection(self, collection_data: ChromaCollectionCreate) -> ChromaCollectionResponse:
         """새 Collection 생성"""
         try:
+            logger.info(f"Creating collection: {collection_data.name}")
+            logger.info(f"Collection metadata: {collection_data.metadata}")
+            logger.info(f"Owner: {collection_data.owner_type}:{collection_data.owner_id}")
+            
             # 컬렉션 이름 중복 확인
             try:
                 existing_collection = self.client.get_collection(name=collection_data.name)
                 if existing_collection:
                     raise HTTPException(status_code=400, detail="이미 존재하는 컬렉션 이름입니다.")
-            except:
-                # 컬렉션이 존재하지 않으면 정상
-                pass
+            except Exception as e:
+                # 컬렉션이 존재하지 않으면 정상 (예외 무시)
+                logger.info(f"Collection {collection_data.name} does not exist, proceeding with creation")
             
             # ChromaDB에 실제 컬렉션 생성
+            logger.info(f"Creating ChromaDB collection with metadata: {collection_data.metadata}")
             chroma_collection = self.client.create_collection(
                 name=collection_data.name,
                 metadata=collection_data.metadata or {"hnsw:space": "cosine"}
             )
+            logger.info(f"ChromaDB collection created successfully: {collection_data.name}")
             
             collection_id = str(uuid.uuid4())
             now = datetime.now()
@@ -468,6 +471,9 @@ class ChromaService:
             raise
         except Exception as e:
             logger.error(f"Failed to create collection: {str(e)}")
+            logger.error(f"Exception type: {type(e).__name__}")
+            import traceback
+            logger.error(f"Full traceback: {traceback.format_exc()}")
             raise HTTPException(status_code=500, detail="Collection 생성에 실패했습니다.")
     
     async def delete_collection(self, collection_id: str):
@@ -639,4 +645,178 @@ class ChromaService:
             return intersection / len(query_words)
             
         except Exception:
-            return 0.0 
+            return 0.0
+
+    # RAG 서비스 호환성을 위한 추가 메서드들
+    def hybrid_search(self, collection_name: str, query: str, n_results: int = 5) -> List[Dict[str, Any]]:
+        """하이브리드 검색 (벡터 + 키워드 기반)"""
+        try:
+            collection = self.client.get_collection(name=collection_name)
+            
+            # 벡터 검색
+            vector_results = collection.query(
+                query_texts=[query],
+                n_results=n_results * 2,  # 더 많은 결과를 가져와서 하이브리드 점수로 재정렬
+                include=["documents", "metadatas", "distances"]
+            )
+            
+            # 결과 포맷팅 및 하이브리드 점수 계산
+            hybrid_results = []
+            if vector_results and 'documents' in vector_results and vector_results['documents']:
+                documents = vector_results['documents'][0]
+                metadatas = vector_results.get('metadatas', [[]])[0]
+                distances = vector_results.get('distances', [[]])[0]
+                ids = vector_results.get('ids', [[]])[0]
+                
+                for i, doc in enumerate(documents):
+                    metadata = metadatas[i] if i < len(metadatas) else {}
+                    distance = distances[i] if i < len(distances) else 1.0
+                    doc_id = ids[i] if i < len(ids) else f"doc_{i}"
+                    
+                    # 벡터 유사도 (거리를 유사도로 변환)
+                    vector_similarity = max(0, 1 - distance)
+                    
+                    # 키워드 유사도
+                    keyword_similarity = self._calculate_keyword_similarity(query, doc)
+                    
+                    # 하이브리드 점수 (가중 평균)
+                    hybrid_score = (vector_similarity * 0.7) + (keyword_similarity * 0.3)
+                    
+                    hybrid_results.append({
+                        "id": doc_id,
+                        "content": doc,
+                        "similarity": hybrid_score,
+                        "distance": distance,
+                        "vector_score": vector_similarity,
+                        "keyword_score": keyword_similarity,
+                        "metadata": metadata
+                    })
+                
+                # 하이브리드 점수로 정렬하고 상위 n_results개만 반환
+                hybrid_results.sort(key=lambda x: x["similarity"], reverse=True)
+                hybrid_results = hybrid_results[:n_results]
+            
+            logger.info(f"Hybrid search completed for collection {collection_name}: {len(hybrid_results)} results")
+            return hybrid_results
+            
+        except Exception as e:
+            logger.error(f"Failed to perform hybrid search on collection {collection_name}: {str(e)}")
+            raise
+    
+    def query_documents_simple(self, collection_name: str, query: str, n_results: int = 5) -> List[Dict[str, Any]]:
+        """간단한 문서 검색 (RAG 서비스 호환성을 위한 메서드)"""
+        try:
+            collection = self.client.get_collection(name=collection_name)
+            
+            # 문서 검색
+            results = collection.query(
+                query_texts=[query],
+                n_results=n_results,
+                include=["documents", "metadatas", "distances"]
+            )
+            
+            # 결과 포맷팅
+            formatted_results = []
+            if results and 'documents' in results and results['documents']:
+                documents = results['documents'][0]
+                metadatas = results.get('metadatas', [[]])[0]
+                distances = results.get('distances', [[]])[0]
+                ids = results.get('ids', [[]])[0]
+                
+                for i, doc in enumerate(documents):
+                    metadata = metadatas[i] if i < len(metadatas) else {}
+                    distance = distances[i] if i < len(distances) else 1.0
+                    doc_id = ids[i] if i < len(ids) else f"doc_{i}"
+                    
+                    # 거리를 유사도로 변환
+                    similarity = max(0, 1 - distance)
+                    
+                    formatted_results.append({
+                        "id": doc_id,
+                        "content": doc,
+                        "similarity": similarity,
+                        "distance": distance,
+                        "metadata": metadata
+                    })
+            
+            logger.info(f"Simple query completed for collection {collection_name}: {len(formatted_results)} results")
+            return formatted_results
+            
+        except Exception as e:
+            logger.error(f"Failed to query documents from collection {collection_name}: {str(e)}")
+            raise
+    
+    def get_documents(self, collection_name: str, page: int = 1, page_size: int = 20) -> Dict[str, Any]:
+        """컬렉션의 문서 목록 조회 (페이지네이션 지원)"""
+        try:
+            collection = self.client.get_collection(name=collection_name)
+            
+            # 전체 문서 수 조회
+            total_count = collection.count()
+            
+            # 페이지네이션 계산
+            offset = (page - 1) * page_size
+            limit = page_size
+            
+            # 문서 조회
+            results = collection.get(
+                limit=limit,
+                offset=offset,
+                include=["documents", "metadatas"]
+            )
+            
+            # 결과 포맷팅
+            documents = []
+            if results and 'documents' in results:
+                for i, doc in enumerate(results['documents']):
+                    metadata = results.get('metadatas', [])[i] if i < len(results.get('metadatas', [])) else {}
+                    doc_id = results.get('ids', [])[i] if i < len(results.get('ids', [])) else f"doc_{i}"
+                    
+                    documents.append({
+                        "id": doc_id,
+                        "content": doc[:200] + "..." if len(doc) > 200 else doc,  # 미리보기용으로 제한
+                        "full_content": doc,
+                        "metadata": metadata
+                    })
+            
+            return {
+                "documents": documents,
+                "pagination": {
+                    "page": page,
+                    "page_size": page_size,
+                    "total_count": total_count,
+                    "total_pages": (total_count + page_size - 1) // page_size,
+                    "has_next": page * page_size < total_count,
+                    "has_prev": page > 1
+                }
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to get documents from collection {collection_name}: {str(e)}")
+            raise
+    
+    def delete_document(self, collection_name: str, document_id: str) -> bool:
+        """컬렉션에서 특정 문서 삭제"""
+        try:
+            collection = self.client.get_collection(name=collection_name)
+            
+            # 문서 삭제
+            collection.delete(ids=[document_id])
+            
+            logger.info(f"Document {document_id} deleted from collection {collection_name}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to delete document {document_id} from collection {collection_name}: {str(e)}")
+            return False
+
+
+# 전역 ChromaService 인스턴스
+_chroma_service_instance = None
+
+def get_chroma_service() -> ChromaService:
+    """ChromaService 싱글톤 인스턴스 반환"""
+    global _chroma_service_instance
+    if _chroma_service_instance is None:
+        _chroma_service_instance = ChromaService()
+    return _chroma_service_instance

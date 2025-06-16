@@ -72,7 +72,7 @@ const LoginPage = () => {
             </div>
             
             <h1 className="text-3xl font-bold text-neutral-900 mb-2 font-display">
-              MAI-X
+              MAX
             </h1>
             <p className="text-neutral-600 font-light">
               Manufacturing AI & DX Platform
@@ -170,7 +170,7 @@ const LoginPage = () => {
         {/* Bottom Text */}
         <div className="text-center mt-8">
           <p className="text-neutral-400 text-sm">
-            © 2025 MAI-X. All rights reserved.
+            © 2025 MAX. All rights reserved.
           </p>
         </div>
       </div>

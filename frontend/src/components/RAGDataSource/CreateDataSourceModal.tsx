@@ -4,7 +4,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useQuery } from 'react-query';
-import { X, User, Users } from 'lucide-react';
+import { X, User, Users, AlertCircle } from 'lucide-react';
 import axios from 'axios';
 import { CreateDataSourceData } from '../../types/ragDataSource';
 
@@ -32,6 +32,38 @@ const CreateDataSourceModal: React.FC<CreateDataSourceModalProps> = ({
   const [description, setDescription] = useState('');
   const [ownerType, setOwnerType] = useState<'USER' | 'GROUP'>('USER');
   const [selectedGroupId, setSelectedGroupId] = useState<number | undefined>();
+  const [nameError, setNameError] = useState<string>('');
+
+  // 영어 이름 검증 함수
+  const validateEnglishName = (value: string): string => {
+    if (!value.trim()) {
+      return '';
+    }
+    
+    // 영어, 숫자, 공백, 하이픈, 밑줄만 허용
+    const englishPattern = /^[a-zA-Z0-9\s\-_]+$/;
+    
+    if (!englishPattern.test(value)) {
+      return '데이터소스 이름은 영어, 숫자, 공백, 하이픈(-), 밑줄(_)만 사용할 수 있습니다.';
+    }
+    
+    if (value.length < 2) {
+      return '데이터소스 이름은 최소 2자 이상이어야 합니다.';
+    }
+    
+    if (value.length > 50) {
+      return '데이터소스 이름은 최대 50자까지 입력할 수 있습니다.';
+    }
+    
+    return '';
+  };
+
+  // 이름 변경 핸들러
+  const handleNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setName(value);
+    setNameError(validateEnglishName(value));
+  };
 
   // 그룹 목록 조회
   const { data: groups } = useQuery<Group[]>(
@@ -52,6 +84,14 @@ const CreateDataSourceModal: React.FC<CreateDataSourceModalProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // 최종 검증
+    const error = validateEnglishName(name);
+    if (error) {
+      setNameError(error);
+      return;
+    }
+    
     onSubmit({
       name,
       description: description || undefined,
@@ -65,6 +105,7 @@ const CreateDataSourceModal: React.FC<CreateDataSourceModalProps> = ({
     setDescription('');
     setOwnerType('USER');
     setSelectedGroupId(undefined);
+    setNameError('');
     onClose();
   };
 
@@ -75,6 +116,8 @@ const CreateDataSourceModal: React.FC<CreateDataSourceModalProps> = ({
   }, [groups, selectedGroupId]);
 
   if (!isOpen) return null;
+
+  const isFormValid = name.trim() && !nameError && (ownerType === 'USER' || selectedGroupId);
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
@@ -98,12 +141,35 @@ const CreateDataSourceModal: React.FC<CreateDataSourceModalProps> = ({
             <input
               type="text"
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              onChange={handleNameChange}
               required
-              className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="예: 고객 지원 문서"
+              className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 ${
+                nameError 
+                  ? 'border-red-300 focus:ring-red-500' 
+                  : 'border-gray-300 focus:ring-blue-500'
+              }`}
+              placeholder="예: Customer Support Documents"
               disabled={isLoading}
             />
+            
+            {/* 힌트 메시지 */}
+            <div className="mt-1 text-xs text-gray-500">
+              <div className="flex items-center gap-1">
+                <AlertCircle className="h-3 w-3" />
+                <span>영어, 숫자, 공백, 하이픈(-), 밑줄(_)만 사용 가능</span>
+              </div>
+              <div className="ml-4 mt-0.5">
+                예시: "Product Manual", "FAQ_Database", "Support-Docs"
+              </div>
+            </div>
+            
+            {/* 오류 메시지 */}
+            {nameError && (
+              <div className="mt-1 text-sm text-red-600 flex items-center gap-1">
+                <AlertCircle className="h-4 w-4" />
+                <span>{nameError}</span>
+              </div>
+            )}
           </div>
 
           <div>
@@ -115,7 +181,7 @@ const CreateDataSourceModal: React.FC<CreateDataSourceModalProps> = ({
               onChange={(e) => setDescription(e.target.value)}
               rows={3}
               className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="데이터소스에 대한 간단한 설명을 입력하세요"
+              placeholder="데이터소스에 대한 간단한 설명을 입력하세요 (한글 가능)"
               disabled={isLoading}
             />
           </div>
@@ -191,7 +257,7 @@ const CreateDataSourceModal: React.FC<CreateDataSourceModalProps> = ({
             </button>
             <button
               type="submit"
-              disabled={isLoading || !name.trim() || (ownerType === 'GROUP' && !selectedGroupId)}
+              disabled={isLoading || !isFormValid}
               className="flex-1 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50"
             >
               {isLoading ? '생성 중...' : '생성'}
