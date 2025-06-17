@@ -88,7 +88,10 @@ const DashboardLayout: React.FC = () => {
         {/* Header */}
         <div className="p-6 border-b border-neutral-100">
           {!sidebarCollapsed && (
-            <div className="flex items-center space-x-4 mb-6">
+            <div 
+              onClick={() => navigate('/dashboard')}
+              className="flex items-center space-x-4 mb-6 cursor-pointer hover:opacity-80 transition-opacity"
+            >
               <div className="relative">
                 <div className="w-12 h-12 bg-gradient-to-br from-neutral-900 to-neutral-700 rounded-2xl flex items-center justify-center shadow-glow">
                   <span className="text-white font-bold text-xl font-display">M</span>
@@ -166,7 +169,10 @@ const DashboardLayout: React.FC = () => {
               </div>
               
               <div className="flex space-x-2">
-                <button className="flex-1 bg-white hover:bg-neutral-100 text-neutral-700 px-3 py-2 rounded-xl text-xs font-medium transition-colors flex items-center justify-center space-x-1">
+                <button 
+                  onClick={() => navigate('/profile')}
+                  className="flex-1 bg-white hover:bg-neutral-100 text-neutral-700 px-3 py-2 rounded-xl text-xs font-medium transition-colors flex items-center justify-center space-x-1"
+                >
                   <Settings className="w-3 h-3" />
                   <span>설정</span>
                 </button>

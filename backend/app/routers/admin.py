@@ -890,7 +890,7 @@ async def change_user_password(
         )
     
     # 비밀번호 해시화
-    from app.utils.security import get_password_hash
+    from app.utils.auth import get_password_hash
     hashed_password = get_password_hash(request.new_password)
     user.hashed_password = hashed_password
     

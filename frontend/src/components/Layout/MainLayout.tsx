@@ -48,7 +48,10 @@ const MainLayout: React.FC = () => {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
             {/* Logo */}
-            <div className="flex items-center space-x-4">
+            <div 
+              onClick={() => navigate('/dashboard')}
+              className="flex items-center space-x-4 cursor-pointer hover:opacity-80 transition-opacity"
+            >
               <div className="relative">
                 <div className="w-10 h-10 bg-gradient-to-br from-gray-900 to-gray-700 rounded-xl flex items-center justify-center shadow-lg">
                   <span className="text-white font-bold text-lg font-display">M</span>
@@ -101,7 +104,10 @@ const MainLayout: React.FC = () => {
                 {/* Dropdown Menu */}
                 {dropdownOpen && (
                   <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-gray-100 py-1 z-50">
-                    <button className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center space-x-2">
+                    <button 
+                      onClick={() => navigate('/profile')}
+                      className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center space-x-2"
+                    >
                       <Settings className="w-4 h-4" />
                       <span>설정</span>
                     </button>

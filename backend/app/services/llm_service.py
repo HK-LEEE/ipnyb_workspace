@@ -368,5 +368,141 @@ class LLMService:
         
         return models
 
+    async def generate_response(self, messages: List[Dict[str, str]], model: str = None, 
+                              stream: bool = False, **kwargs) -> Dict[str, Any]:
+        """LLM 채팅을 위한 응답 생성 메서드"""
+        try:
+            # 모델이 지정되지 않은 경우 기본 모델 사용
+            if not model:
+                model = settings.azure_openai_deployment_name if self.azure_available else settings.ollama_default_model
+            
+            # 메시지 형식 검증
+            if not messages or not isinstance(messages, list):
+                raise ValueError("messages는 비어있지 않은 리스트여야 합니다")
+            
+            # 시스템 메시지와 일반 메시지 분리
+            system_messages = [msg["content"] for msg in messages if msg.get("role") == "system"]
+            user_messages = [msg for msg in messages if msg.get("role") in ["user", "assistant"]]
+            
+            # 시스템 메시지 결합
+            system_message = "\n\n".join(system_messages) if system_messages else "당신은 도움이 되는 AI 어시스턴트입니다."
+            
+            # 대화 히스토리 구성
+            conversation_history = []
+            for msg in user_messages:
+                if msg.get("role") == "user":
+                    conversation_history.append(f"User: {msg['content']}")
+                elif msg.get("role") == "assistant":
+                    conversation_history.append(f"Assistant: {msg['content']}")
+            
+            # 마지막 사용자 메시지 추출
+            last_user_message = None
+            for msg in reversed(user_messages):
+                if msg.get("role") == "user":
+                    last_user_message = msg["content"]
+                    break
+            
+            if not last_user_message:
+                raise ValueError("사용자 메시지가 없습니다")
+            
+            # 대화 컨텍스트 구성
+            if len(conversation_history) > 1:
+                conversation_context = "\n".join(conversation_history[:-1])  # 마지막 메시지 제외
+                user_prompt = f"대화 히스토리:\n{conversation_context}\n\n현재 사용자 메시지: {last_user_message}"
+            else:
+                user_prompt = last_user_message
+            
+            # 모델 타입에 따라 적절한 API 호출
+            result = None
+            if model.startswith("gpt-") or "azure" in model.lower():
+                # Azure OpenAI API 호출
+                result = await self._call_azure_api_chat(system_message, user_prompt, model)
+            else:
+                # Ollama API 호출
+                result = await self._call_ollama_api_chat(system_message, user_prompt, model)
+            
+            if not result:
+                raise Exception("LLM 응답 생성 실패")
+            
+            return {
+                "content": result.get("response", ""),
+                "usage": result.get("usage", {}),
+                "model": model,
+                "provider": result.get("provider", "unknown")
+            }
+            
+        except Exception as e:
+            logger.error(f"generate_response 실패: {e}")
+            return {
+                "content": "죄송합니다. 응답 생성 중 오류가 발생했습니다.",
+                "error": str(e)
+            }
+    
+    async def _call_azure_api_chat(self, system_message: str, user_message: str, model: str = None) -> Dict[str, Any]:
+        """Azure OpenAI Chat API 호출 (채팅용)"""
+        headers = {
+            "Content-Type": "application/json",
+            "api-key": settings.azure_openai_api_key
+        }
+        
+        deployment_name = model or settings.azure_openai_deployment_name
+        url = f"{settings.azure_openai_endpoint}/openai/deployments/{deployment_name}/chat/completions?api-version={settings.azure_openai_api_version}"
+        
+        payload = {
+            "messages": [
+                {"role": "system", "content": system_message},
+                {"role": "user", "content": user_message}
+            ],
+            "max_tokens": settings.max_tokens,
+            "temperature": settings.temperature
+        }
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, headers=headers, json=payload, timeout=60) as response:
+                if response.status == 200:
+                    result = await response.json()
+                    return {
+                        "response": result["choices"][0]["message"]["content"],
+                        "provider": "azure",
+                        "model": deployment_name,
+                        "usage": result.get("usage", {})
+                    }
+                else:
+                    error_text = await response.text()
+                    raise Exception(f"Azure API 오류 ({response.status}): {error_text}")
+    
+    async def _call_ollama_api_chat(self, system_message: str, user_message: str, model: str = None) -> Dict[str, Any]:
+        """Ollama Chat API 호출 (채팅용)"""
+        model_name = model or settings.ollama_default_model
+        
+        payload = {
+            "model": model_name,
+            "prompt": f"System: {system_message}\n\nUser: {user_message}\n\nAssistant:",
+            "stream": False,
+            "options": {
+                "temperature": settings.temperature,
+                "num_predict": settings.max_tokens
+            }
+        }
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.post(f"{settings.ollama_base_url}/api/generate", 
+                                  json=payload, timeout=120) as response:
+                if response.status == 200:
+                    result = await response.json()
+                    return {
+                        "response": result.get("response", ""),
+                        "provider": "ollama",
+                        "model": model_name,
+                        "usage": {
+                            "prompt_tokens": result.get("prompt_eval_count", 0),
+                            "completion_tokens": result.get("eval_count", 0),
+                            "total_tokens": result.get("prompt_eval_count", 0) + result.get("eval_count", 0)
+                        }
+                    }
+                else:
+                    error_text = await response.text()
+                    raise Exception(f"Ollama API 오류 ({response.status}): {error_text}")
+
 # 전역 LLM 서비스 인스턴스
 llm_service = LLMService() 

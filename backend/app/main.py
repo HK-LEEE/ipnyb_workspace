@@ -15,10 +15,15 @@ from .models.flow_studio import (
     Project, FlowStudioFlow, ComponentTemplate, 
     FlowComponent, FlowConnection, FlowStudioExecution
 )
+# LLM Chat 모델 추가
+from .models.llm_chat import (
+    MAXLLM_Persona, MAXLLM_Prompt_Template, MAXLLM_Chat, MAXLLM_Message, 
+    MAXLLM_Message_Feedback, MAXLLM_Shared_Chat, MAXLLM_Flow_Publish_Access
+)
 
 # 모델 import 후에 database 모듈 import
 from .database import create_tables
-from .routers import auth, workspace, jupyter, files, llm, service, admin, chroma
+from .routers import auth, workspace, jupyter, files, llm, service, admin, chroma, llm_chat
 from .llmops import router as llmops_router
 # Flow Studio 라우터 추가
 from .routers import flow_studio
@@ -35,7 +40,7 @@ app = FastAPI(
 # CORS 미들웨어 추가
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=["http://localhost:3000", "http://localhost:3001", "http://127.0.0.1:3000", "http://127.0.0.1:3001"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -57,6 +62,8 @@ app.include_router(service.router)
 app.include_router(flow_studio.router, tags=["Flow Studio"])
 # ChromaDB 라우터 추가
 app.include_router(chroma.router, tags=["ChromaDB"])
+# LLM Chat 라우터 추가
+app.include_router(llm_chat.router, tags=["LLM Chat"])
 
 # 정적 파일 서빙 (업로드된 파일용)
 if not os.path.exists("data"):

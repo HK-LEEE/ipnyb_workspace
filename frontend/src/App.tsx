@@ -16,6 +16,8 @@ import { Toaster } from 'react-hot-toast'
 import FlowStudioProjectsPage from './pages/FlowStudioProjectsPage'
 import FlowStudioWorkspacePage from './pages/FlowStudioWorkspacePage'
 import WorkspacesPage from './pages/WorkspacesPage'
+import ProfilePage from './pages/ProfilePage'
+import ChatPage from './pages/ChatPage'
 
 
 
@@ -27,9 +29,26 @@ const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   useEffect(() => {
     const token = localStorage.getItem('token')
     if (!token) {
-      navigate('/login')
+      navigate('/login', { replace: true })
     } else {
-      setIsChecking(false)
+      // 토큰이 있는 경우 유효성 검증
+      fetch('/api/auth/me', {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      })
+      .then(response => {
+        if (!response.ok) {
+          localStorage.removeItem('token')
+          navigate('/login', { replace: true })
+        } else {
+          setIsChecking(false)
+        }
+      })
+      .catch(() => {
+        localStorage.removeItem('token')
+        navigate('/login', { replace: true })
+      })
     }
   }, [navigate])
 
@@ -115,6 +134,12 @@ function App() {
               <Route path="flow-studio/:projectId/workspace" element={<FlowStudioWorkspacePage />} />
               <Route path="flow-studio/:projectId/workspace/:flowId" element={<FlowStudioWorkspacePage />} />
             </Route>
+            
+            {/* Profile Page */}
+            <Route path="/profile" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
+            
+            {/* Chat Page */}
+            <Route path="/chat" element={<ProtectedRoute><ChatPage /></ProtectedRoute>} />
             
             {/* Standalone Protected Routes (without MainLayout) */}
             <Route path="/admin" element={<ProtectedRoute><AdminPage /></ProtectedRoute>} />

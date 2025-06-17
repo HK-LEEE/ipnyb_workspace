@@ -25,7 +25,10 @@ import {
   Node,
   BackgroundVariant,
   Panel,
-  NodeTypes
+  NodeTypes,
+  getIncomers,
+  getOutgoers,
+  getConnectedEdges
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import {
@@ -61,6 +64,10 @@ import { RAGDataSourceListItem } from '../types/ragDataSource';
 // 커스텀 노드 컴포넌트들
 const RAGNode: React.FC<{ data: any }> = ({ data }) => {
   const getStatusColor = () => {
+    // 유효성 검사 결과에 따른 색상 결정
+    if (data.isValid === false) return 'border-red-500 bg-red-50';
+    if (data.isIsolated) return 'border-orange-500 bg-orange-50';
+    
     switch (data.status) {
       case 'ok': return 'border-green-500 bg-green-50';
       case 'warning': return 'border-yellow-500 bg-yellow-50';
@@ -69,24 +76,50 @@ const RAGNode: React.FC<{ data: any }> = ({ data }) => {
     }
   };
 
+  const getValidationIcon = () => {
+    if (data.isValid === false) return <XCircle className="h-3 w-3 text-red-500" />;
+    if (data.isIsolated) return <AlertTriangle className="h-3 w-3 text-orange-500" />;
+    return null;
+  };
+
   return (
-    <div className={`px-4 py-3 rounded-lg border-2 ${getStatusColor()} min-w-[180px]`}>
+    <div className={`px-4 py-3 rounded-lg border-2 ${getStatusColor()} min-w-[180px] transition-colors`}>
       <div className="flex items-center gap-2 mb-2">
         <Database className="h-4 w-4 text-blue-600" />
         <span className="font-medium text-sm">RAG 데이터소스</span>
+        {getValidationIcon()}
         {data.status === 'warning' && <AlertTriangle className="h-3 w-3 text-yellow-500" />}
         {data.status === 'error' && <XCircle className="h-3 w-3 text-red-500" />}
-        {data.status === 'ok' && <CheckCircle className="h-3 w-3 text-green-500" />}
+        {data.status === 'ok' && !data.isValid && !data.isIsolated && <CheckCircle className="h-3 w-3 text-green-500" />}
       </div>
       <div className="text-xs text-gray-600">
         {data.dataSourceName || '데이터소스 선택'}
       </div>
+      {data.isIsolated && (
+        <div className="text-xs text-orange-600 mt-1">
+          ⚠️ 고립된 노드
+        </div>
+      )}
+      {data.isValid === false && (
+        <div className="text-xs text-red-600 mt-1">
+          ❌ 연결 오류
+        </div>
+      )}
+      {data.connectionCount !== undefined && (
+        <div className="text-xs text-gray-500 mt-1">
+          연결: {data.connectionCount}개
+        </div>
+      )}
     </div>
   );
 };
 
 const LLMNode: React.FC<{ data: any }> = ({ data }) => {
   const getStatusColor = () => {
+    // 유효성 검사 결과에 따른 색상 결정
+    if (data.isValid === false) return 'border-red-500 bg-red-50';
+    if (data.isIsolated) return 'border-orange-500 bg-orange-50';
+    
     switch (data.status) {
       case 'ok': return 'border-green-500 bg-green-50';
       case 'warning': return 'border-yellow-500 bg-yellow-50';
@@ -95,18 +128,40 @@ const LLMNode: React.FC<{ data: any }> = ({ data }) => {
     }
   };
 
+  const getValidationIcon = () => {
+    if (data.isValid === false) return <XCircle className="h-3 w-3 text-red-500" />;
+    if (data.isIsolated) return <AlertTriangle className="h-3 w-3 text-orange-500" />;
+    return null;
+  };
+
   return (
-    <div className={`px-4 py-3 rounded-lg border-2 ${getStatusColor()} min-w-[180px]`}>
+    <div className={`px-4 py-3 rounded-lg border-2 ${getStatusColor()} min-w-[180px] transition-colors`}>
       <div className="flex items-center gap-2 mb-2">
         <MessageSquare className="h-4 w-4 text-green-600" />
         <span className="font-medium text-sm">LLM 채팅</span>
+        {getValidationIcon()}
         {data.status === 'warning' && <AlertTriangle className="h-3 w-3 text-yellow-500" />}
         {data.status === 'error' && <XCircle className="h-3 w-3 text-red-500" />}
-        {data.status === 'ok' && <CheckCircle className="h-3 w-3 text-green-500" />}
+        {data.status === 'ok' && !data.isValid && !data.isIsolated && <CheckCircle className="h-3 w-3 text-green-500" />}
       </div>
       <div className="text-xs text-gray-600">
         {data.model || 'gpt-3.5-turbo'}
       </div>
+      {data.isIsolated && (
+        <div className="text-xs text-orange-600 mt-1">
+          ⚠️ 고립된 노드
+        </div>
+      )}
+      {data.isValid === false && (
+        <div className="text-xs text-red-600 mt-1">
+          ❌ 연결 오류
+        </div>
+      )}
+      {data.connectionCount !== undefined && (
+        <div className="text-xs text-gray-500 mt-1">
+          연결: {data.connectionCount}개
+        </div>
+      )}
     </div>
   );
 };
@@ -228,9 +283,139 @@ const FlowStudioPage: React.FC = () => {
     { id: 2, name: 'ANTHROPIC_API_KEY', description: 'Anthropic API 키', category: 'api_key', created_at: '2024-01-01T00:00:00Z' },
   ], []);
 
+  // 위상검증 로직 - 연결 유효성 검사
+  const isValidConnection = useCallback(
+    (connection: Connection | Edge) => {
+      // Edge 타입인 경우 Connection으로 변환
+      const conn: Connection = 'sourceHandle' in connection && connection.sourceHandle !== undefined
+        ? connection as Connection
+        : {
+          source: connection.source,
+          target: connection.target,
+          sourceHandle: connection.sourceHandle || null,
+          targetHandle: connection.targetHandle || null
+        };
+             // 1. 자기 자신에게 연결하는 것 방지
+       if (conn.source === conn.target) {
+         console.warn("자기 자신에게 연결할 수 없습니다.");
+         toast.error("자기 자신에게 연결할 수 없습니다.");
+         return false;
+       }
+
+       // 2. 이미 연결된 핸들에 다시 연결하는 것 방지
+       const isTargetHandleAlreadyConnected = edges.some(
+         (edge) => 
+           edge.target === conn.target && 
+           edge.targetHandle === conn.targetHandle
+       );
+       
+       if (isTargetHandleAlreadyConnected) {
+         console.warn("이미 연결된 핸들입니다.");
+         toast.error("이미 연결된 핸들입니다.");
+         return false;
+       }
+
+       // 3. 순환 구조 검사
+       const sourceNode = nodes.find((node) => node.id === conn.source);
+       const targetNode = nodes.find((node) => node.id === conn.target);
+      
+      if (!sourceNode || !targetNode) {
+        console.warn("연결하려는 노드를 찾을 수 없습니다.");
+        return false;
+      }
+
+      // 4. 순환 참조 검사 (DFS 기반)
+      const hasCycle = (targetId: string, sourceId: string): boolean => {
+        const visited = new Set<string>();
+        const stack = [targetId];
+                 const tempEdges = [...edges, { 
+           source: sourceId, 
+           target: targetId, 
+           id: 'temp',
+           sourceHandle: conn.sourceHandle,
+           targetHandle: conn.targetHandle
+         }];
+
+        while (stack.length > 0) {
+          const currentNodeId = stack.pop()!;
+
+          if (currentNodeId === sourceId) {
+            return true; // 순환 발견
+          }
+
+          if (!visited.has(currentNodeId)) {
+            visited.add(currentNodeId);
+            const outgoingEdges = tempEdges.filter(edge => edge.source === currentNodeId);
+            for (const edge of outgoingEdges) {
+              stack.push(edge.target);
+            }
+          }
+        }
+
+        return false; // 순환 없음
+      };
+
+             if (hasCycle(conn.target, conn.source)) {
+         console.warn("순환 구조는 허용되지 않습니다.");
+         toast.error("순환 구조는 허용되지 않습니다.");
+         return false;
+       }
+
+       // 5. 노드 타입 기반 연결 규칙 검사
+       const sourceType = sourceNode.type || sourceNode.data?.type;
+       const targetType = targetNode.type || targetNode.data?.type;
+
+       // 입력 노드끼리 연결 방지
+       if (sourceType === 'input' && targetType === 'input') {
+         console.warn("입력 노드끼리는 연결할 수 없습니다.");
+         toast.error("입력 노드끼리는 연결할 수 없습니다.");
+         return false;
+       }
+
+       // 모든 검사를 통과하면 true 반환
+       console.log(`연결 허용: ${conn.source} -> ${conn.target}`);
+       return true;
+    },
+    [nodes, edges]
+  );
+
+  // 사후 검증 - 노드 상태 업데이트
+  useEffect(() => {
+    setNodes((currentNodes) =>
+      currentNodes.map((node) => {
+        const incomers = getIncomers(node, currentNodes, edges);
+        const outgoers = getOutgoers(node, currentNodes, edges);
+        const connectedEdges = getConnectedEdges([node], edges);
+
+        // 고립된 노드 검사
+        const isIsolated = incomers.length === 0 && outgoers.length === 0;
+        
+        // 프로세스 노드의 경우 입력과 출력이 모두 있어야 함
+        let isValid = true;
+        if (node.data?.category === 'model' || node.data?.category === 'processor') {
+          isValid = incomers.length > 0 && outgoers.length > 0;
+        }
+
+        // 노드 데이터에 유효성 상태 추가
+        return {
+          ...node,
+          data: { 
+            ...node.data, 
+            isValid,
+            isIsolated,
+            connectionCount: connectedEdges.length
+          },
+        };
+      })
+    );
+  }, [nodes, edges, setNodes]);
+
   // 연결 처리
   const onConnect = useCallback(
-    (params: Connection) => setEdges((eds) => addEdge(params, eds)),
+    (params: Connection) => {
+      console.log(`연결 시도: ${params.source} -> ${params.target}`);
+      setEdges((eds) => addEdge(params, eds));
+    },
     [setEdges]
   );
 
@@ -543,6 +728,7 @@ const FlowStudioPage: React.FC = () => {
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
+            isValidConnection={isValidConnection}
             nodeTypes={nodeTypes}
             fitView
             attributionPosition="bottom-left"

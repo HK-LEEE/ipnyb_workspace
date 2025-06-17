@@ -34,7 +34,7 @@ class ChromaService:
         """ChromaDB 클라이언트 초기화"""
         try:
             chroma_host = os.getenv("CHROMA_HOST", "localhost")
-            chroma_port = int(os.getenv("CHROMA_PORT", "8000"))
+            chroma_port = int(os.getenv("CHROMA_PORT", "8003"))
             chroma_path = os.getenv("CHROMA_PERSIST_PATH", "./chroma_data")
             
             logger.info(f"Initializing ChromaDB client with host={chroma_host}, port={chroma_port}, path={chroma_path}")

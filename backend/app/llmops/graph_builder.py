@@ -202,10 +202,7 @@ class GraphBuilder:
                 
             except Exception as e:
                 logger.error(f"노드 인스턴스화 실패: {node_data.get('id', 'unknown')} - {e}")
-                # 에러가 발생한 노드는 패스스루로 대체
-                node_id = node_data.get("id")
-                if node_id:
-                    self.built_nodes[node_id] = RunnablePassthrough()
+                continue
         
         logger.info(f"총 {len(self.built_nodes)}개 노드 인스턴스화 완료")
     
@@ -213,12 +210,6 @@ class GraphBuilder:
         """엣지를 분석하여 그래프 구조를 생성합니다."""
         edges = self.flow_data.get("edges", [])
         
-        # 그래프 구조 초기화
-        all_node_ids = set(self.built_nodes.keys())
-        for node_id in all_node_ids:
-            self.in_degree[node_id] = 0
-        
-        # 엣지 처리
         for edge in edges:
             try:
                 source = edge.get("source")
@@ -228,25 +219,16 @@ class GraphBuilder:
                     logger.warning(f"엣지에 source 또는 target이 없습니다: {edge}")
                     continue
                 
-                if source not in self.built_nodes or target not in self.built_nodes:
-                    logger.warning(f"존재하지 않는 노드를 참조하는 엣지: {source} -> {target}")
-                    continue
-                
-                # 인접 리스트에 추가
+                # 그래프 구조 업데이트
                 self.adjacency_list[source].append(target)
-                
-                # 진입 차수 증가
                 self.in_degree[target] += 1
                 
-                # 엣지 정보 저장
-                edge_info = {
-                    "source": source,
-                    "target": target,
-                    "sourceHandle": edge.get("sourceHandle"),
-                    "targetHandle": edge.get("targetHandle")
-                }
-                self.edges.append(edge_info)
+                # 진입 차수가 없는 노드들의 진입 차수를 0으로 초기화
+                if source not in self.in_degree:
+                    self.in_degree[source] = 0
                 
+                # 엣지 저장
+                self.edges.append(edge)
                 logger.debug(f"엣지 추가: {source} -> {target}")
                 
             except Exception as e:
@@ -307,11 +289,31 @@ class GraphBuilder:
             logger.warning("실행할 노드가 없습니다. 패스스루 체인을 반환합니다")
             return RunnablePassthrough()
         
+        # 🔍 데이터 흐름 추적 로그
+        logger.info("=== 데이터 흐름 추적 시작 ===")
+        logger.info(f"실행 순서: {' → '.join(execution_order)}")
+        
+        # 각 노드의 입력/출력 연결 정보 로깅
+        for i, node_id in enumerate(execution_order):
+            incoming_edges = [edge for edge in self.edges if edge.get('target') == node_id]
+            outgoing_edges = [edge for edge in self.edges if edge.get('source') == node_id]
+            
+            logger.info(f"노드 {i+1}: {node_id}")
+            input_connections = [f"{edge.get('source')}:{edge.get('sourceHandle', 'default')}" for edge in incoming_edges]
+            output_connections = [f"{edge.get('target')}:{edge.get('targetHandle', 'default')}" for edge in outgoing_edges]
+            logger.info(f"  ↳ 입력: {input_connections}")
+            logger.info(f"  ↳ 출력: {output_connections}")
+            
+            # 노드 메타데이터 로깅
+            node_meta = self.node_metadata.get(node_id, {})
+            logger.info(f"  ↳ 타입: {node_meta.get('type', 'unknown')}")
+            logger.info(f"  ↳ 위치: {node_meta.get('position', {})}")
+        
         # 단일 노드인 경우
         if len(execution_order) == 1:
             node_id = execution_order[0]
             logger.info(f"단일 노드 체인: {node_id}")
-            return self.built_nodes[node_id]
+            return self._create_instrumented_node(node_id, self.built_nodes[node_id])
         
         # 다중 노드 체인 빌드
         try:
@@ -324,22 +326,121 @@ class GraphBuilder:
             else:
                 start_node_id = start_nodes[0]
             
+            logger.info(f"시작 노드: {start_node_id}")
+            
             # 체인 빌드: 선형 체인으로 단순화
-            chain = self.built_nodes[start_node_id]
+            chain = self._create_instrumented_node(start_node_id, self.built_nodes[start_node_id])
             
             # 나머지 노드들을 순서대로 연결
             for node_id in execution_order[1:]:
                 if node_id != start_node_id:
-                    next_runnable = self.built_nodes[node_id]
+                    next_runnable = self._create_instrumented_node(node_id, self.built_nodes[node_id])
                     chain = chain | next_runnable
             
             logger.info(f"체인 빌드 완료: {len(execution_order)}개 노드 연결")
+            logger.info("=== 데이터 흐름 추적 완료 ===")
             return chain
             
         except Exception as e:
             logger.error(f"체인 빌드 실패: {e}")
             # 폴백: 모든 노드를 단순 순차 실행
             return self._build_fallback_chain(execution_order)
+    
+    def _create_instrumented_node(self, node_id: str, runnable: Runnable) -> Runnable:
+        """
+        노드 실행을 계측하는 래퍼를 생성합니다.
+        
+        Args:
+            node_id: 노드 ID
+            runnable: 원본 Runnable
+            
+        Returns:
+            계측된 Runnable
+        """
+        def instrumented_invoke(input_data: Any) -> Any:
+            """계측된 노드 실행 함수"""
+            try:
+                # 🔍 노드 실행 시작 로그
+                logger.info(f"🚀 노드 실행 시작: {node_id}")
+                logger.info(f"  ↳ 입력 데이터 타입: {type(input_data).__name__}")
+                
+                # 입력 데이터 상세 로깅
+                if isinstance(input_data, dict):
+                    logger.info(f"  ↳ 입력 키: {list(input_data.keys())}")
+                    for key, value in input_data.items():
+                        if isinstance(value, str) and len(value) > 100:
+                            logger.info(f"  ↳ {key}: {value[:100]}... ({len(value)} 문자)")
+                        else:
+                            logger.info(f"  ↳ {key}: {value}")
+                else:
+                    logger.info(f"  ↳ 입력 값: {str(input_data)[:200]}...")
+                
+                # 🔍 템플릿 바인딩 로그 (노드 메타데이터에서 템플릿 정보 추출)
+                node_meta = self.node_metadata.get(node_id, {})
+                node_data = node_meta.get('data', {})
+                field_values = node_data.get('fieldValues', {})
+                
+                # 템플릿이 있는 필드들 검사
+                template_fields = ['system_message', 'prompt', 'template', 'instruction']
+                for field_name in template_fields:
+                    if field_name in field_values:
+                        template_value = field_values[field_name]
+                        if isinstance(template_value, str) and '{' in template_value:
+                            logger.info(f"📝 템플릿 바인딩 감지: {node_id}.{field_name}")
+                            logger.info(f"  ↳ 원본 템플릿: {template_value}")
+                            
+                            # 변수 추출 (간단한 정규식 사용)
+                            import re
+                            variables = re.findall(r'{([^}]+)}', template_value)
+                            logger.info(f"  ↳ 감지된 변수: {variables}")
+                            
+                            # 변수 바인딩 시도
+                            if isinstance(input_data, dict):
+                                bound_template = template_value
+                                for var in variables:
+                                    if var in input_data:
+                                        value = input_data[var]
+                                        var_placeholder = "{" + var + "}"
+                                        bound_template = bound_template.replace(var_placeholder, str(value))
+                                        logger.info(f"  ↳ {var} = {value}")
+                                
+                                logger.info(f"  ↳ 바인딩된 템플릿: {bound_template}")
+                
+                # 원본 Runnable 실행
+                import time
+                start_time = time.time()
+                result = runnable.invoke(input_data)
+                end_time = time.time()
+                
+                # 🔍 노드 실행 완료 로그
+                execution_time_ms = int((end_time - start_time) * 1000)
+                logger.info(f"✅ 노드 실행 완료: {node_id} ({execution_time_ms}ms)")
+                logger.info(f"  ↳ 출력 데이터 타입: {type(result).__name__}")
+                
+                # 출력 데이터 상세 로깅
+                if isinstance(result, dict):
+                    logger.info(f"  ↳ 출력 키: {list(result.keys())}")
+                    for key, value in result.items():
+                        if isinstance(value, str) and len(value) > 100:
+                            logger.info(f"  ↳ {key}: {value[:100]}... ({len(value)} 문자)")
+                        else:
+                            logger.info(f"  ↳ {key}: {value}")
+                elif isinstance(result, str):
+                    if len(result) > 200:
+                        logger.info(f"  ↳ 출력: {result[:200]}... ({len(result)} 문자)")
+                    else:
+                        logger.info(f"  ↳ 출력: {result}")
+                else:
+                    logger.info(f"  ↳ 출력: {str(result)[:200]}...")
+                
+                return result
+                
+            except Exception as e:
+                logger.error(f"❌ 노드 실행 실패: {node_id} - {e}")
+                # 실행 실패 시 입력 데이터 그대로 반환
+                return input_data
+        
+        return RunnableLambda(instrumented_invoke)
     
     def _build_fallback_chain(self, execution_order: List[str]) -> Runnable:
         """
@@ -408,7 +509,19 @@ class GraphBuilder:
         warnings = []
         
         try:
-            # 고립된 노드 검사
+            logger.info("🔍 그래프 위상 검증 시작")
+            
+            # 1. 기본 구조 검증
+            if not self.built_nodes:
+                issues.append("노드가 없습니다")
+                return {
+                    "valid": False,
+                    "issues": issues,
+                    "warnings": warnings,
+                    "error": "빈 그래프"
+                }
+            
+            # 2. 고립된 노드 검사
             isolated_nodes = []
             for node_id in self.built_nodes.keys():
                 has_incoming = any(node_id in targets for targets in self.adjacency_list.values())
@@ -419,36 +532,178 @@ class GraphBuilder:
             
             if isolated_nodes:
                 warnings.append(f"고립된 노드: {isolated_nodes}")
+                logger.warning(f"고립된 노드 발견: {isolated_nodes}")
             
-            # 순환 참조 검사
+            # 3. 순환 참조 검사 (Kahn's Algorithm 기반)
             try:
-                self._topological_sort()
+                execution_order = self._topological_sort()
+                logger.info(f"✅ 순환 참조 없음 - 실행 순서: {' → '.join(execution_order)}")
             except RuntimeError as e:
                 issues.append(f"순환 참조 오류: {e}")
+                logger.error(f"❌ 순환 참조 발견: {e}")
             
-            # 시작/끝 노드 검사
+            # 4. 시작/끝 노드 검사
             start_nodes = [node_id for node_id in self.built_nodes.keys() if self.in_degree[node_id] == 0]
             end_nodes = [node_id for node_id in self.built_nodes.keys() if not self.adjacency_list[node_id]]
             
             if not start_nodes:
-                issues.append("시작 노드가 없습니다")
+                issues.append("시작 노드가 없습니다 (모든 노드에 입력이 있음)")
+                logger.error("❌ 시작 노드 없음")
+            else:
+                logger.info(f"✅ 시작 노드: {start_nodes}")
             
             if not end_nodes:
-                warnings.append("끝 노드가 없습니다")
+                warnings.append("끝 노드가 없습니다 (모든 노드에서 출력이 있음)")
+                logger.warning("⚠️ 끝 노드 없음")
+            else:
+                logger.info(f"✅ 끝 노드: {end_nodes}")
+            
+            # 5. 노드 타입별 연결 규칙 검증
+            type_validation_issues = self._validate_node_type_connections()
+            if type_validation_issues:
+                issues.extend(type_validation_issues)
+            
+            # 6. 핸들 연결 유효성 검사
+            handle_validation_issues = self._validate_handle_connections()
+            if handle_validation_issues:
+                issues.extend(handle_validation_issues)
+            
+            # 7. 연결성 검사 (모든 노드가 연결되어 있는지)
+            connectivity_issues = self._validate_connectivity()
+            if connectivity_issues:
+                warnings.extend(connectivity_issues)
+            
+            # 최종 결과
+            is_valid = len(issues) == 0
+            logger.info(f"🔍 그래프 위상 검증 완료 - 유효: {is_valid}")
+            logger.info(f"  ↳ 이슈: {len(issues)}개, 경고: {len(warnings)}개")
             
             return {
-                "valid": len(issues) == 0,
+                "valid": is_valid,
                 "issues": issues,
                 "warnings": warnings,
                 "start_nodes": start_nodes,
                 "end_nodes": end_nodes,
-                "isolated_nodes": isolated_nodes
+                "isolated_nodes": isolated_nodes,
+                "node_count": len(self.built_nodes),
+                "edge_count": len(self.edges),
+                "validation_details": {
+                    "has_cycles": len([issue for issue in issues if "순환" in issue]) > 0,
+                    "has_isolated_nodes": len(isolated_nodes) > 0,
+                    "has_start_nodes": len(start_nodes) > 0,
+                    "has_end_nodes": len(end_nodes) > 0
+                }
             }
             
         except Exception as e:
+            logger.error(f"❌ 그래프 검증 중 오류: {e}")
             return {
                 "valid": False,
                 "issues": [f"검증 과정에서 오류 발생: {e}"],
                 "warnings": [],
                 "error": str(e)
-            } 
+            }
+    
+    def _validate_node_type_connections(self) -> List[str]:
+        """노드 타입별 연결 규칙을 검증합니다."""
+        issues = []
+        
+        try:
+            for edge in self.edges:
+                source_id = edge.get("source")
+                target_id = edge.get("target")
+                
+                if not source_id or not target_id:
+                    continue
+                
+                source_meta = self.node_metadata.get(source_id, {})
+                target_meta = self.node_metadata.get(target_id, {})
+                
+                source_type = source_meta.get("type", "unknown")
+                target_type = target_meta.get("type", "unknown")
+                
+                # 입력 노드끼리 연결 금지
+                if source_type == "input" and target_type == "input":
+                    issues.append(f"입력 노드끼리 연결 불가: {source_id} -> {target_id}")
+                
+                # 출력 노드에서 다른 노드로 연결 금지 (출력은 끝점이어야 함)
+                if source_type == "output":
+                    issues.append(f"출력 노드에서 다른 노드로 연결 불가: {source_id} -> {target_id}")
+                    
+                logger.debug(f"연결 규칙 검증: {source_type}({source_id}) -> {target_type}({target_id})")
+        
+        except Exception as e:
+            logger.error(f"노드 타입 연결 검증 실패: {e}")
+            
+        return issues
+    
+    def _validate_handle_connections(self) -> List[str]:
+        """핸들 연결의 유효성을 검증합니다."""
+        issues = []
+        
+        try:
+            # 같은 타겟 핸들에 여러 연결이 있는지 검사
+            target_handles = {}
+            
+            for edge in self.edges:
+                target_id = edge.get("target")
+                target_handle = edge.get("targetHandle", "default")
+                
+                if not target_id:
+                    continue
+                    
+                handle_key = f"{target_id}:{target_handle}"
+                
+                if handle_key in target_handles:
+                    target_handles[handle_key].append(edge)
+                else:
+                    target_handles[handle_key] = [edge]
+            
+            # 중복 연결 검사
+            for handle_key, edges in target_handles.items():
+                if len(edges) > 1:
+                    source_info = [f"{e.get('source')}:{e.get('sourceHandle', 'default')}" for e in edges]
+                    issues.append(f"핸들 {handle_key}에 중복 연결: {', '.join(source_info)}")
+                    
+        except Exception as e:
+            logger.error(f"핸들 연결 검증 실패: {e}")
+            
+        return issues
+    
+    def _validate_connectivity(self) -> List[str]:
+        """그래프 연결성을 검증합니다."""
+        warnings = []
+        
+        try:
+            if len(self.built_nodes) <= 1:
+                return warnings
+                
+            # DFS로 모든 노드가 연결되어 있는지 확인
+            visited = set()
+            start_node = next(iter(self.built_nodes.keys()))
+            
+            def dfs(node_id: str):
+                if node_id in visited:
+                    return
+                visited.add(node_id)
+                
+                # 나가는 연결
+                for neighbor in self.adjacency_list.get(node_id, []):
+                    dfs(neighbor)
+                
+                # 들어오는 연결 (역방향 탐색)
+                for source, targets in self.adjacency_list.items():
+                    if node_id in targets:
+                        dfs(source)
+            
+            dfs(start_node)
+            
+            # 연결되지 않은 노드들
+            disconnected_nodes = set(self.built_nodes.keys()) - visited
+            if disconnected_nodes:
+                warnings.append(f"연결되지 않은 노드 그룹: {list(disconnected_nodes)}")
+                
+        except Exception as e:
+            logger.error(f"연결성 검증 실패: {e}")
+            
+        return warnings 

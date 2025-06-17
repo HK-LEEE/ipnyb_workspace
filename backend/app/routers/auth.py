@@ -579,4 +579,27 @@ async def change_password(
     current_user.hashed_password = get_password_hash(password_data.new_password)
     db.commit()
     
-    return {"message": "비밀번호가 성공적으로 변경되었습니다."} 
+    return {"message": "비밀번호가 성공적으로 변경되었습니다."}
+
+@router.get("/me")
+async def get_current_user_info(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """현재 사용자 정보 조회"""
+    return {
+        "id": str(current_user.id),
+        "real_name": current_user.real_name,
+        "display_name": current_user.display_name,
+        "email": current_user.email,
+        "phone_number": current_user.phone_number,
+        "department": current_user.department,
+        "position": current_user.position,
+        "bio": current_user.bio,
+        "is_active": current_user.is_active,
+        "is_admin": current_user.is_admin,
+        "approval_status": current_user.approval_status,
+        "created_at": current_user.created_at.isoformat() if current_user.created_at else None,
+        "last_login_at": current_user.last_login_at.isoformat() if current_user.last_login_at else None,
+        "login_count": current_user.login_count
+    } 

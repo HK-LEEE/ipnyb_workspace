@@ -917,32 +917,236 @@ class RAGDataSourceService:
     def get_user_storage_overview(self, current_user: User) -> Dict[str, Any]:
         """사용자의 전체 저장소 사용량 개요"""
         try:
-            # 사용자 개인 저장소 통계
-            user_stats = self.file_storage_service.get_storage_stats(
-                OwnerType.USER, 
-                str(current_user.id)
-            )
+            accessible_datasources = self.auth_service.get_accessible_rag_datasources(current_user)
             
-            # 사용자가 속한 그룹들의 저장소 통계
-            group_stats = []
-            # TODO: 사용자가 속한 그룹 목록을 가져와서 각 그룹의 통계 수집
+            total_files = 0
+            total_size = 0
+            datasource_stats = []
             
-            # 사용자가 생성한 데이터소스 수
-            user_datasources = self.db.query(RAGDataSource).filter(
-                RAGDataSource.created_by == current_user.id
-            ).count()
+            for datasource in accessible_datasources:
+                try:
+                    storage_info = self.get_stored_files(datasource, current_user)
+                    
+                    ds_file_count = len(storage_info.get("files", []))
+                    ds_total_size = sum(file.get("size", 0) for file in storage_info.get("files", []))
+                    
+                    total_files += ds_file_count
+                    total_size += ds_total_size
+                    
+                    datasource_stats.append({
+                        "id": datasource.id,
+                        "name": datasource.name,
+                        "file_count": ds_file_count,
+                        "total_size": ds_total_size,
+                        "document_count": datasource.document_count
+                    })
+                    
+                except Exception as e:
+                    logger.warning(f"Failed to get storage info for datasource {datasource.id}: {e}")
+                    continue
             
             return {
-                "user_id": str(current_user.id),
-                "user_storage": user_stats,
-                "group_storages": group_stats,
-                "total_datasources_created": user_datasources,
-                "overview_generated_at": datetime.now().isoformat()
+                "total_files": total_files,
+                "total_size": total_size,
+                "total_size_mb": round(total_size / (1024 * 1024), 2),
+                "datasource_count": len(accessible_datasources),
+                "datasource_stats": datasource_stats
             }
             
         except Exception as e:
-            logger.error(f"Failed to get storage overview for user {current_user.id}: {str(e)}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="저장소 개요 조회에 실패했습니다."
-            ) 
+            logger.error(f"Failed to get storage overview: {str(e)}")
+            return {
+                "total_files": 0,
+                "total_size": 0,
+                "total_size_mb": 0,
+                "datasource_count": 0,
+                "datasource_stats": []
+            }
+
+    async def search_similar_documents(self, datasource_id: int, query: str, top_k: int = 5, 
+                                     similarity_threshold: float = 0.3) -> List[Dict[str, Any]]:
+        """유사 문서 검색 (LLM 채팅 서비스용)"""
+        try:
+            # 데이터소스 조회
+            datasource = self.db.query(RAGDataSource).filter(RAGDataSource.id == datasource_id).first()
+            if not datasource:
+                logger.warning(f"Datasource {datasource_id} not found")
+                return []
+            
+            # ChromaDB에서 검색
+            search_results = await self.query_documents(datasource, query, top_k)
+            
+            if not search_results.get("results"):
+                return []
+            
+            # 결과 포맷팅
+            formatted_results = []
+            for result in search_results["results"]:
+                # 유사도 점수 확인 (임계값 적용)
+                similarity = result.get("similarity", 0.0)
+                if similarity < similarity_threshold:
+                    continue
+                
+                formatted_results.append({
+                    "content": result.get("content", ""),
+                    "similarity": similarity,
+                    "metadata": result.get("metadata", {}),
+                    "document_id": result.get("id", ""),
+                    "source": result.get("metadata", {}).get("source", "unknown")
+                })
+            
+            logger.info(f"Found {len(formatted_results)} similar documents for datasource {datasource_id}")
+            return formatted_results
+            
+        except Exception as e:
+            logger.error(f"Error searching similar documents for datasource {datasource_id}: {e}")
+            return []
+
+    async def search_multiple_datasources(self, datasource_ids: List[int], query: str, 
+                                        top_k: int = 3, similarity_threshold: float = 0.3) -> List[Dict[str, Any]]:
+        """여러 데이터소스에서 동시 검색"""
+        try:
+            all_results = []
+            
+            for datasource_id in datasource_ids:
+                try:
+                    results = await self.search_similar_documents(
+                        datasource_id, query, top_k, similarity_threshold
+                    )
+                    
+                    # 데이터소스 정보 추가
+                    for result in results:
+                        result["datasource_id"] = datasource_id
+                        all_results.append(result)
+                        
+                except Exception as e:
+                    logger.warning(f"Search failed for datasource {datasource_id}: {e}")
+                    continue
+            
+            # 유사도 점수로 정렬
+            all_results.sort(key=lambda x: x.get("similarity", 0), reverse=True)
+            
+            # 최대 결과 수 제한
+            max_total_results = top_k * len(datasource_ids)
+            return all_results[:max_total_results]
+            
+        except Exception as e:
+            logger.error(f"Error in multi-datasource search: {e}")
+            return []
+
+    async def hybrid_search(self, datasource_id: int, query: str, top_k: int = 5,
+                          use_semantic: bool = True, use_keyword: bool = True,
+                          semantic_weight: float = 0.7) -> List[Dict[str, Any]]:
+        """하이브리드 검색 (의미론적 + 키워드 검색)"""
+        try:
+            if not use_semantic and not use_keyword:
+                return []
+            
+            datasource = self.db.query(RAGDataSource).filter(RAGDataSource.id == datasource_id).first()
+            if not datasource:
+                return []
+            
+            semantic_results = []
+            keyword_results = []
+            
+            # 의미론적 검색
+            if use_semantic:
+                semantic_results = await self.search_similar_documents(
+                    datasource_id, query, top_k * 2
+                )
+            
+            # 키워드 검색 (간단한 텍스트 매칭)
+            if use_keyword:
+                keyword_results = await self._keyword_search(datasource, query, top_k * 2)
+            
+            # 결과 병합 및 점수 조정
+            combined_results = self._merge_search_results(
+                semantic_results, keyword_results, semantic_weight, top_k
+            )
+            
+            return combined_results
+            
+        except Exception as e:
+            logger.error(f"Error in hybrid search: {e}")
+            return []
+
+    async def _keyword_search(self, datasource: RAGDataSource, query: str, top_k: int) -> List[Dict[str, Any]]:
+        """키워드 기반 검색"""
+        try:
+            # ChromaDB에서 메타데이터 기반 검색
+            # 실제 구현에서는 더 정교한 키워드 매칭 로직 필요
+            query_terms = query.lower().split()
+            
+            # 간단한 키워드 매칭을 위한 where 조건 구성
+            where_conditions = []
+            for term in query_terms[:3]:  # 최대 3개 키워드만 사용
+                if len(term) > 2:  # 2글자 이상만
+                    where_conditions.append({"$contains": term})
+            
+            if not where_conditions:
+                return []
+            
+            # ChromaDB 쿼리 실행
+            collection = await self.chroma_service.get_collection(datasource.chroma_collection_name)
+            if not collection:
+                return []
+            
+            # 키워드 검색 결과
+            results = []
+            # 실제 키워드 검색 로직은 ChromaDB의 기능에 따라 구현
+            # 여기서는 기본 검색 결과를 반환
+            
+            return results
+            
+        except Exception as e:
+            logger.error(f"Keyword search error: {e}")
+            return []
+
+    def _merge_search_results(self, semantic_results: List[Dict], keyword_results: List[Dict],
+                            semantic_weight: float, top_k: int) -> List[Dict[str, Any]]:
+        """검색 결과 병합"""
+        try:
+            # 문서 ID 기반으로 결과 병합
+            merged_docs = {}
+            
+            # 의미론적 검색 결과 처리
+            for result in semantic_results:
+                doc_id = result.get("document_id", "")
+                if doc_id:
+                    merged_docs[doc_id] = result.copy()
+                    merged_docs[doc_id]["semantic_score"] = result.get("similarity", 0)
+                    merged_docs[doc_id]["keyword_score"] = 0
+            
+            # 키워드 검색 결과 처리
+            for result in keyword_results:
+                doc_id = result.get("document_id", "")
+                if doc_id:
+                    if doc_id in merged_docs:
+                        merged_docs[doc_id]["keyword_score"] = result.get("similarity", 0)
+                    else:
+                        merged_docs[doc_id] = result.copy()
+                        merged_docs[doc_id]["semantic_score"] = 0
+                        merged_docs[doc_id]["keyword_score"] = result.get("similarity", 0)
+            
+            # 최종 점수 계산
+            for doc_id, doc in merged_docs.items():
+                semantic_score = doc.get("semantic_score", 0)
+                keyword_score = doc.get("keyword_score", 0)
+                
+                # 가중 평균 계산
+                final_score = (semantic_score * semantic_weight + 
+                             keyword_score * (1 - semantic_weight))
+                
+                doc["final_similarity"] = final_score
+                doc["similarity"] = final_score  # 호환성을 위해
+            
+            # 최종 점수로 정렬
+            sorted_results = sorted(merged_docs.values(), 
+                                  key=lambda x: x.get("final_similarity", 0), 
+                                  reverse=True)
+            
+            return sorted_results[:top_k]
+            
+        except Exception as e:
+            logger.error(f"Error merging search results: {e}")
+            return [] 

@@ -6,8 +6,10 @@ import {
   ChevronRight, AlertCircle, CheckCircle, XCircle, Clock,
   Eye, EyeOff, Key, Filter, Grid, List, MoreVertical,
   ArrowRight, ArrowLeft, User, Phone, Building, Briefcase,
-  Calendar, Activity, Mail, MapPin
+  Calendar, Activity, Mail, MapPin, Brain, Server
 } from 'lucide-react';
+import { llmChatApi } from '../services/llmChatApi';
+import { LLMModelManagement, LLMModelCreate, ModelType, OwnerType } from '../types/llmChat';
 
 interface User {
   id: string;
@@ -97,7 +99,7 @@ interface FeatureCategory {
 
 const AdminPage: React.FC = () => {
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'users' | 'features' | 'groups'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'users' | 'features' | 'groups' | 'models'>('dashboard');
   const [users, setUsers] = useState<User[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
   const [features, setFeatures] = useState<Feature[]>([]);
@@ -166,6 +168,28 @@ const AdminPage: React.FC = () => {
     group_id: null as number | null
   });
 
+  // LLM 모델 관리를 위한 상태
+  const [llmModels, setLlmModels] = useState<LLMModelManagement[]>([]);
+  const [showModelModal, setShowModelModal] = useState(false);
+  const [selectedModel, setSelectedModel] = useState<LLMModelManagement | null>(null);
+  const [isEditingModel, setIsEditingModel] = useState(false);
+  const [editedModelInfo, setEditedModelInfo] = useState({
+    model_name: '',
+    model_type: 'AZURE_OPENAI' as ModelType,
+    model_id: '',
+    description: '',
+    config: {} as any,
+    owner_type: 'USER' as OwnerType,
+    owner_id: '',
+    is_active: true
+  });
+  
+  // Ollama 관련 상태
+  const [ollamaModels, setOllamaModels] = useState<any[]>([]);
+  const [ollamaLoading, setOllamaLoading] = useState(false);
+  const [ollamaHost, setOllamaHost] = useState('localhost');
+  const [ollamaPort, setOllamaPort] = useState(11434);
+
   useEffect(() => {
     const token = localStorage.getItem('token');
     if (!token) {
@@ -205,6 +229,14 @@ const AdminPage: React.FC = () => {
       if (categoriesRes.ok) {
         const categoriesData = await categoriesRes.json();
         setFeatureCategories(categoriesData);
+      }
+
+      // LLM 모델 가져오기
+      try {
+        const modelsData = await llmChatApi.getLLMModels();
+        setLlmModels(modelsData);
+      } catch (error) {
+        console.error('LLM 모델 로드 실패:', error);
       }
     } catch (error) {
       console.error('데이터 로드 실패:', error);
@@ -716,6 +748,159 @@ const AdminPage: React.FC = () => {
     }
   };
 
+  // ==================== LLM 모델 관리 함수들 ====================
+
+  const openModelModal = (model: LLMModelManagement | null = null) => {
+    if (model) {
+      setSelectedModel(model);
+      setEditedModelInfo({
+        model_name: model.model_name,
+        model_type: model.model_type,
+        model_id: model.model_id,
+        description: model.description || '',
+        config: model.config,
+        owner_type: model.owner_type,
+        owner_id: model.owner_id,
+        is_active: model.is_active
+      });
+      setIsEditingModel(true);
+    } else {
+      setSelectedModel(null);
+      const defaultConfig = getDefaultConfig('AZURE_OPENAI');
+      setEditedModelInfo({
+        model_name: '',
+        model_type: 'AZURE_OPENAI',
+        model_id: '',
+        description: '',
+        config: defaultConfig,
+        owner_type: 'USER',
+        owner_id: '',
+        is_active: true
+      });
+      setIsEditingModel(false);
+    }
+    setShowModelModal(true);
+  };
+
+  const saveModel = async () => {
+    try {
+      if (isEditingModel && selectedModel) {
+        await llmChatApi.updateLLMModel(selectedModel.id, editedModelInfo);
+        alert('모델이 업데이트되었습니다.');
+      } else {
+        const createData: LLMModelCreate = {
+          model_name: editedModelInfo.model_name,
+          model_type: editedModelInfo.model_type,
+          model_id: editedModelInfo.model_id,
+          description: editedModelInfo.description,
+          config: editedModelInfo.config,
+          owner_type: editedModelInfo.owner_type,
+          owner_id: editedModelInfo.owner_id || undefined
+        };
+        await llmChatApi.createLLMModel(createData);
+        alert('모델이 생성되었습니다.');
+      }
+      
+      await fetchData();
+      setShowModelModal(false);
+    } catch (error) {
+      console.error('모델 저장 실패:', error);
+      alert('모델 저장 중 오류가 발생했습니다.');
+    }
+  };
+
+  const deleteModel = async (modelId: number) => {
+    if (!confirm('정말로 이 모델을 삭제하시겠습니까?')) {
+      return;
+    }
+
+    try {
+      await llmChatApi.deleteLLMModel(modelId);
+      await fetchData();
+      alert('모델이 삭제되었습니다.');
+    } catch (error) {
+      console.error('모델 삭제 실패:', error);
+      alert('모델 삭제 중 오류가 발생했습니다.');
+    }
+  };
+
+  // Ollama 모델 목록 가져오기
+  const fetchOllamaModels = async () => {
+    setOllamaLoading(true);
+    try {
+      const response = await llmChatApi.getOllamaModels(ollamaHost, ollamaPort);
+      if (response.success) {
+        setOllamaModels(response.models);
+      } else {
+        alert('Ollama 모델 목록을 가져올 수 없습니다.');
+      }
+    } catch (error) {
+      console.error('Ollama 모델 조회 실패:', error);
+      alert('Ollama 서버에 연결할 수 없습니다. 서버가 실행 중인지 확인해주세요.');
+    } finally {
+      setOllamaLoading(false);
+    }
+  };
+
+  // 모델 타입별 기본 설정 가져오기
+  const getDefaultConfig = (modelType: ModelType) => {
+    switch (modelType) {
+      case 'AZURE_OPENAI':
+        return {
+          api_key: '',
+          endpoint: '',
+          api_version: '2024-02-01',
+          deployment_name: '',
+          temperature: 0.7,
+          max_tokens: 1000
+        };
+      case 'AZURE_CLAUDE':
+        return {
+          api_key: '',
+          endpoint: '',
+          api_version: '2024-02-01',
+          model_version: 'claude-3-sonnet-20240229',
+          temperature: 0.7,
+          max_tokens: 1000
+        };
+      case 'AZURE_DEEPSEEK':
+        return {
+          api_key: '',
+          endpoint: '',
+          api_version: '2024-02-01',
+          deployment_name: '',
+          temperature: 0.7,
+          max_tokens: 1000
+        };
+      case 'OLLAMA':
+        return {
+          host: 'localhost',
+          port: 11434,
+          model_name: '',
+          temperature: 0.7,
+          num_predict: 1000
+        };
+      case 'FLOWSTUDIO':
+        return {
+          flow_id: '',
+          endpoint: '',
+          timeout: 30
+        };
+      default:
+        return {};
+    }
+  };
+
+  // 모델 타입 변경 시 기본 설정 적용
+  const handleModelTypeChange = (newType: ModelType) => {
+    const defaultConfig = getDefaultConfig(newType);
+    setEditedModelInfo({
+      ...editedModelInfo,
+      model_type: newType,
+      config: defaultConfig
+    });
+  };
+
   const filteredUsers = users.filter(user => {
     const matchesSearch = user.real_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
                          user.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -769,13 +954,21 @@ const AdminPage: React.FC = () => {
       <div className="bg-gradient-to-br from-gray-50 to-white border-b border-gray-100">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
           <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-2xl font-bold text-gray-900 font-display">
-                시스템 관리
-              </h1>
-              <p className="text-gray-600 mt-1">
-                사용자, 기능, 그룹을 관리하고 시스템을 모니터링합니다
-              </p>
+            <div className="flex items-center space-x-4">
+              <div 
+                onClick={() => navigate('/dashboard')}
+                className="w-10 h-10 bg-gray-900 rounded-lg flex items-center justify-center cursor-pointer hover:opacity-80 transition-opacity"
+              >
+                <span className="text-white font-bold text-lg">M</span>
+              </div>
+              <div>
+                <h1 className="text-2xl font-bold text-gray-900 font-display">
+                  시스템 관리
+                </h1>
+                <p className="text-gray-600 mt-1">
+                  사용자, 기능, 그룹을 관리하고 시스템을 모니터링합니다
+                </p>
+              </div>
             </div>
             
             <button
@@ -886,7 +1079,8 @@ const AdminPage: React.FC = () => {
               { key: 'dashboard', label: '대시보드', icon: Database },
               { key: 'users', label: '사용자 관리', icon: Users },
               { key: 'features', label: '기능 관리', icon: Settings },
-              { key: 'groups', label: '그룹 관리', icon: Shield }
+              { key: 'groups', label: '그룹 관리', icon: Shield },
+              { key: 'models', label: 'LLM 모델', icon: Brain }
             ].map(({ key, label, icon: Icon }) => (
               <button
                 key={key}
@@ -1887,6 +2081,491 @@ const AdminPage: React.FC = () => {
                 className="px-4 py-2 bg-gray-900 text-white rounded-xl hover:bg-gray-800 transition-colors"
               >
                 {selectedGroup ? '수정' : '생성'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Models Tab */}
+      {activeTab === 'models' && (
+        <div className="space-y-6">
+          {/* 헤더 */}
+          <div className="bg-white rounded-2xl border border-gray-100 p-6">
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between space-y-4 md:space-y-0">
+              <div>
+                <h2 className="text-xl font-semibold text-gray-900">LLM 모델 관리</h2>
+                <p className="text-gray-600 mt-1">AI 모델 설정을 관리하고 권한을 제어합니다.</p>
+              </div>
+              <button 
+                onClick={() => openModelModal()}
+                className="flex items-center space-x-2 px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition-colors"
+              >
+                <Plus className="w-4 h-4" />
+                <span>모델 추가</span>
+              </button>
+            </div>
+          </div>
+
+          {/* 모델 목록 */}
+          <div className="bg-white rounded-2xl border border-gray-100">
+            <div className="overflow-x-auto">
+              <table className="min-w-full">
+                <thead className="bg-gray-50 border-b border-gray-100">
+                  <tr>
+                    <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">모델</th>
+                    <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">타입</th>
+                    <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">모델 ID</th>
+                    <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">소유자</th>
+                    <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">상태</th>
+                    <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">생성일</th>
+                    <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">액션</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {llmModels.map((model) => (
+                    <tr key={model.id} className="hover:bg-gray-50 transition-colors">
+                      <td className="px-6 py-4">
+                        <div className="flex items-center">
+                          <div className="w-10 h-10 bg-blue-50 rounded-full flex items-center justify-center">
+                            <Brain className="w-5 h-5 text-blue-600" />
+                          </div>
+                          <div className="ml-4">
+                            <div className="text-sm font-medium text-gray-900">{model.model_name}</div>
+                            <div className="text-sm text-gray-500">{model.description}</div>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <span className="px-2 py-1 text-xs font-medium rounded bg-blue-100 text-blue-800">
+                          {model.model_type}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 text-sm text-gray-900">
+                        {model.model_id}
+                      </td>
+                      <td className="px-6 py-4 text-sm text-gray-900">
+                        <div>
+                          <span className={`px-2 py-1 text-xs font-medium rounded ${
+                            model.owner_type === 'USER' ? 'bg-green-100 text-green-800' : 'bg-purple-100 text-purple-800'
+                          }`}>
+                            {model.owner_type}
+                          </span>
+                          <div className="text-xs text-gray-500 mt-1">{model.owner_id}</div>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <span className={`px-2 py-1 text-xs font-medium rounded ${
+                          model.is_active ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                        }`}>
+                          {model.is_active ? '활성' : '비활성'}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 text-sm text-gray-500">
+                        {formatDate(model.created_at)}
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="flex space-x-2">
+                          <button
+                            onClick={() => openModelModal(model)}
+                            className="p-1 text-gray-600 hover:text-blue-600 transition-colors"
+                            title="편집"
+                          >
+                            <Edit3 className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => deleteModel(model.id)}
+                            className="p-1 text-gray-600 hover:text-red-600 transition-colors"
+                            title="삭제"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {llmModels.length === 0 && (
+              <div className="text-center py-12">
+                <Brain className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+                <h3 className="text-lg font-medium text-gray-900 mb-2">등록된 모델이 없습니다</h3>
+                <p className="text-gray-600 mb-4">새로운 LLM 모델을 추가해보세요.</p>
+                <button
+                  onClick={() => openModelModal()}
+                  className="inline-flex items-center px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition-colors"
+                >
+                  <Plus className="w-4 h-4 mr-2" />
+                  모델 추가
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Model Modal */}
+      {showModelModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-4xl mx-4 border border-gray-100">
+            <div className="p-6 border-b border-gray-200">
+              <h3 className="text-lg font-semibold text-gray-900">
+                {isEditingModel ? '모델 편집' : '새 모델 추가'}
+              </h3>
+            </div>
+            <div className="p-6 space-y-6 max-h-[70vh] overflow-y-auto">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">모델명 *</label>
+                  <input
+                    type="text"
+                    value={editedModelInfo.model_name}
+                    onChange={(e) => setEditedModelInfo({...editedModelInfo, model_name: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-200 focus:border-gray-300"
+                    placeholder="모델명을 입력하세요"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">모델 타입 *</label>
+                  <select
+                    value={editedModelInfo.model_type}
+                    onChange={(e) => handleModelTypeChange(e.target.value as ModelType)}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-200 focus:border-gray-300"
+                  >
+                    <option value="AZURE_OPENAI">Azure OpenAI</option>
+                    <option value="AZURE_CLAUDE">Azure Claude</option>
+                    <option value="AZURE_DEEPSEEK">Azure DeepSeek</option>
+                    <option value="OLLAMA">Ollama</option>
+                    <option value="FLOWSTUDIO">FlowStudio</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">모델 ID *</label>
+                <input
+                  type="text"
+                  value={editedModelInfo.model_id}
+                  onChange={(e) => setEditedModelInfo({...editedModelInfo, model_id: e.target.value})}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-200 focus:border-gray-300"
+                  placeholder="실제 모델 식별자를 입력하세요"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">설명</label>
+                <textarea
+                  value={editedModelInfo.description}
+                  onChange={(e) => setEditedModelInfo({...editedModelInfo, description: e.target.value})}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-200 focus:border-gray-300"
+                  rows={3}
+                  placeholder="모델에 대한 설명을 입력하세요"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">소유자 타입</label>
+                  <select
+                    value={editedModelInfo.owner_type}
+                    onChange={(e) => setEditedModelInfo({...editedModelInfo, owner_type: e.target.value as OwnerType})}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-200 focus:border-gray-300"
+                  >
+                    <option value="USER">사용자</option>
+                    <option value="GROUP">그룹</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">소유자 ID</label>
+                  <input
+                    type="text"
+                    value={editedModelInfo.owner_id}
+                    onChange={(e) => setEditedModelInfo({...editedModelInfo, owner_id: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-200 focus:border-gray-300"
+                    placeholder="소유자 ID (선택사항)"
+                  />
+                </div>
+              </div>
+
+              {/* 모델 타입별 설정 폼 */}
+              <div className="border-t pt-6">
+                <h4 className="text-md font-medium text-gray-900 mb-4">모델 설정</h4>
+                
+                {/* Azure OpenAI 설정 */}
+                {editedModelInfo.model_type === 'AZURE_OPENAI' && (
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">API Key *</label>
+                        <input
+                          type="password"
+                          value={editedModelInfo.config.api_key || ''}
+                          onChange={(e) => setEditedModelInfo({
+                            ...editedModelInfo,
+                            config: {...editedModelInfo.config, api_key: e.target.value}
+                          })}
+                          className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-200 focus:border-gray-300"
+                          placeholder="Azure OpenAI API Key"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Endpoint *</label>
+                        <input
+                          type="url"
+                          value={editedModelInfo.config.endpoint || ''}
+                          onChange={(e) => setEditedModelInfo({
+                            ...editedModelInfo,
+                            config: {...editedModelInfo.config, endpoint: e.target.value}
+                          })}
+                          className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-200 focus:border-gray-300"
+                          placeholder="https://your-resource.openai.azure.com/"
+                        />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">API Version</label>
+                        <input
+                          type="text"
+                          value={editedModelInfo.config.api_version || '2024-02-01'}
+                          onChange={(e) => setEditedModelInfo({
+                            ...editedModelInfo,
+                            config: {...editedModelInfo.config, api_version: e.target.value}
+                          })}
+                          className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-200 focus:border-gray-300"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Deployment Name *</label>
+                        <input
+                          type="text"
+                          value={editedModelInfo.config.deployment_name || ''}
+                          onChange={(e) => setEditedModelInfo({
+                            ...editedModelInfo,
+                            config: {...editedModelInfo.config, deployment_name: e.target.value},
+                            model_id: e.target.value
+                          })}
+                          className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-200 focus:border-gray-300"
+                          placeholder="gpt-4"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Temperature</label>
+                        <input
+                          type="number"
+                          min="0"
+                          max="2"
+                          step="0.1"
+                          value={editedModelInfo.config.temperature || 0.7}
+                          onChange={(e) => setEditedModelInfo({
+                            ...editedModelInfo,
+                            config: {...editedModelInfo.config, temperature: parseFloat(e.target.value)}
+                          })}
+                          className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-200 focus:border-gray-300"
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Max Tokens</label>
+                      <input
+                        type="number"
+                        min="1"
+                        max="4000"
+                        value={editedModelInfo.config.max_tokens || 1000}
+                        onChange={(e) => setEditedModelInfo({
+                          ...editedModelInfo,
+                          config: {...editedModelInfo.config, max_tokens: parseInt(e.target.value)}
+                        })}
+                        className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-200 focus:border-gray-300"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Ollama 설정 */}
+                {editedModelInfo.model_type === 'OLLAMA' && (
+                  <div className="space-y-4">
+                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                      <h5 className="text-sm font-medium text-blue-900 mb-2">Ollama 서버 연결</h5>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div>
+                          <label className="block text-xs font-medium text-blue-700 mb-1">Host</label>
+                          <input
+                            type="text"
+                            value={ollamaHost}
+                            onChange={(e) => setOllamaHost(e.target.value)}
+                            className="w-full px-2 py-1 text-sm border border-blue-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-300"
+                            placeholder="localhost"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-blue-700 mb-1">Port</label>
+                          <input
+                            type="number"
+                            value={ollamaPort}
+                            onChange={(e) => setOllamaPort(parseInt(e.target.value) || 11434)}
+                            className="w-full px-2 py-1 text-sm border border-blue-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-300"
+                            placeholder="11434"
+                          />
+                        </div>
+                        <div className="flex items-end">
+                          <button
+                            onClick={fetchOllamaModels}
+                            disabled={ollamaLoading}
+                            className="w-full px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {ollamaLoading ? '조회중...' : '모델 조회'}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Host *</label>
+                        <input
+                          type="text"
+                          value={editedModelInfo.config.host || 'localhost'}
+                          onChange={(e) => setEditedModelInfo({
+                            ...editedModelInfo,
+                            config: {...editedModelInfo.config, host: e.target.value}
+                          })}
+                          className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-200 focus:border-gray-300"
+                          placeholder="localhost"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Port *</label>
+                        <input
+                          type="number"
+                          value={editedModelInfo.config.port || 11434}
+                          onChange={(e) => setEditedModelInfo({
+                            ...editedModelInfo,
+                            config: {...editedModelInfo.config, port: parseInt(e.target.value) || 11434}
+                          })}
+                          className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-200 focus:border-gray-300"
+                          placeholder="11434"
+                        />
+                      </div>
+                    </div>
+                    
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">모델 선택 *</label>
+                      {ollamaModels.length > 0 ? (
+                        <select
+                          value={editedModelInfo.config.model_name || ''}
+                          onChange={(e) => setEditedModelInfo({
+                            ...editedModelInfo,
+                            config: {...editedModelInfo.config, model_name: e.target.value},
+                            model_id: e.target.value
+                          })}
+                          className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-200 focus:border-gray-300"
+                        >
+                          <option value="">모델을 선택하세요</option>
+                          {ollamaModels.map((model, index) => (
+                            <option key={index} value={model.name}>
+                              {model.name} ({(model.size / 1024 / 1024 / 1024).toFixed(1)}GB)
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <input
+                          type="text"
+                          value={editedModelInfo.config.model_name || ''}
+                          onChange={(e) => setEditedModelInfo({
+                            ...editedModelInfo,
+                            config: {...editedModelInfo.config, model_name: e.target.value},
+                            model_id: e.target.value
+                          })}
+                          className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-200 focus:border-gray-300"
+                          placeholder="llama2, gemma:7b 등"
+                        />
+                      )}
+                    </div>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Temperature</label>
+                        <input
+                          type="number"
+                          min="0"
+                          max="2"
+                          step="0.1"
+                          value={editedModelInfo.config.temperature || 0.7}
+                          onChange={(e) => setEditedModelInfo({
+                            ...editedModelInfo,
+                            config: {...editedModelInfo.config, temperature: parseFloat(e.target.value)}
+                          })}
+                          className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-200 focus:border-gray-300"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Num Predict</label>
+                        <input
+                          type="number"
+                          min="1"
+                          max="4000"
+                          value={editedModelInfo.config.num_predict || 1000}
+                          onChange={(e) => setEditedModelInfo({
+                            ...editedModelInfo,
+                            config: {...editedModelInfo.config, num_predict: parseInt(e.target.value)}
+                          })}
+                          className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-200 focus:border-gray-300"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* 다른 모델 타입들의 기본 JSON 편집기 */}
+                {!['AZURE_OPENAI', 'OLLAMA'].includes(editedModelInfo.model_type) && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">모델 설정 (JSON)</label>
+                    <textarea
+                      value={JSON.stringify(editedModelInfo.config, null, 2)}
+                      onChange={(e) => {
+                        try {
+                          const config = JSON.parse(e.target.value);
+                          setEditedModelInfo({...editedModelInfo, config});
+                        } catch (error) {
+                          // JSON 파싱 오류는 무시하고 계속 입력 허용
+                        }
+                      }}
+                      className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-200 focus:border-gray-300 font-mono text-sm"
+                      rows={6}
+                      placeholder='{"api_key": "your-key", "endpoint": "https://..."}'
+                    />
+                  </div>
+                )}
+              </div>
+
+              <div className="flex items-center">
+                <input
+                  type="checkbox"
+                  id="is_active"
+                  checked={editedModelInfo.is_active}
+                  onChange={(e) => setEditedModelInfo({...editedModelInfo, is_active: e.target.checked})}
+                  className="rounded border-gray-300 text-gray-900 focus:ring-gray-200"
+                />
+                <label htmlFor="is_active" className="ml-2 text-sm font-medium text-gray-700">
+                  모델 활성화
+                </label>
+              </div>
+            </div>
+            <div className="p-6 border-t border-gray-200 flex justify-end space-x-3">
+              <button
+                onClick={() => setShowModelModal(false)}
+                className="px-4 py-2 text-gray-700 border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors"
+              >
+                취소
+              </button>
+              <button
+                onClick={saveModel}
+                className="px-4 py-2 bg-gray-900 text-white rounded-xl hover:bg-gray-800 transition-colors"
+              >
+                {isEditingModel ? '수정' : '생성'}
               </button>
             </div>
           </div>
