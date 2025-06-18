@@ -8,6 +8,7 @@ import {
   ArrowRight, ArrowLeft, User, Phone, Building, Briefcase,
   Calendar, Activity, Mail, MapPin, Brain, Server
 } from 'lucide-react';
+import FeatureLogo from '../components/common/FeatureLogo';
 import { llmChatApi } from '../services/llmChatApi';
 import { LLMModelManagement, LLMModelCreate, ModelType, OwnerType } from '../types/llmChat';
 
@@ -1290,12 +1291,13 @@ const AdminPage: React.FC = () => {
                 <div key={feature.id} className="bg-white rounded-2xl border border-gray-100 p-6 hover:shadow-md transition-shadow">
                   <div className="flex items-start justify-between mb-4">
                     <div className="flex items-center">
-                      <div className="w-10 h-10 bg-gray-100 rounded-lg flex items-center justify-center">
-                        <span className="text-lg">{feature.icon}</span>
-                      </div>
+                      <FeatureLogo 
+                        displayName={feature.display_name} 
+                        size="small"
+                      />
                       <div className="ml-3">
                         <h3 className="text-sm font-medium text-gray-900">{feature.display_name}</h3>
-                        <p className="text-xs text-gray-500">{feature.category}</p>
+                        <p className="text-xs text-gray-500">{feature.category_display_name || feature.category}</p>
                       </div>
                     </div>
                     <div className="flex items-center space-x-1">
@@ -1813,14 +1815,29 @@ const AdminPage: React.FC = () => {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">아이콘</label>
-                  <input
-                    type="text"
-                    value={editedFeatureInfo.icon}
-                    onChange={(e) => setEditedFeatureInfo({...editedFeatureInfo, icon: e.target.value})}
-                    className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-200 focus:border-gray-300"
-                    placeholder="아이콘 (예: 🚀)"
-                  />
+                  <label className="block text-sm font-medium text-gray-700 mb-1">아이콘 미리보기</label>
+                  <div className="flex items-center space-x-3">
+                    <div className="flex-1">
+                      <input
+                        type="text"
+                        value={editedFeatureInfo.icon}
+                        onChange={(e) => setEditedFeatureInfo({...editedFeatureInfo, icon: e.target.value})}
+                        className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-200 focus:border-gray-300"
+                        placeholder="아이콘 (예: 🚀) - 자동 생성됩니다"
+                        disabled
+                      />
+                      <p className="text-xs text-gray-500 mt-1">
+                        표시명에서 자동으로 약어가 생성됩니다 (예: "MAX FlowStudio" → "MF")
+                      </p>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <span className="text-sm text-gray-600">미리보기:</span>
+                                             <FeatureLogo 
+                         displayName={editedFeatureInfo.display_name || "기능명"}
+                         size="small"
+                       />
+                    </div>
+                  </div>
                 </div>
                 <div className="md:col-span-2">
                   <label className="block text-sm font-medium text-gray-700 mb-1">URL 경로</label>
@@ -1968,7 +1985,11 @@ const AdminPage: React.FC = () => {
                               onClick={() => moveFeatureToAssigned(feature.id)}
                             >
                               <div className="flex items-center">
-                                <span className="mr-2">{feature.icon}</span>
+                                <FeatureLogo 
+                                  displayName={feature.display_name} 
+                                  size="small"
+                                  className="mr-2"
+                                />
                                 <span className="text-sm">{feature.display_name}</span>
                               </div>
                               <ArrowRight className="w-4 h-4 text-gray-400" />
@@ -2000,7 +2021,11 @@ const AdminPage: React.FC = () => {
                             >
                               <div className="flex items-center">
                                 <ArrowLeft className="w-4 h-4 text-gray-400" />
-                                <span className="mr-2 ml-2">{feature.icon}</span>
+                                                                 <FeatureLogo 
+                                   displayName={feature.display_name} 
+                                   size="small"
+                                   className="mr-2 ml-2"
+                                 />
                                 <span className="text-sm">{feature.display_name}</span>
                               </div>
                             </div>

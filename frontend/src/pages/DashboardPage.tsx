@@ -24,6 +24,8 @@ import {
   MessageCircle,
   Plus
 } from 'lucide-react';
+import FeatureLogo from '../components/common/FeatureLogo';
+import MiniLLMChat from '../components/chat/MiniLLMChat';
 import { servicesApi } from '../services/api';
 
 interface Feature {
@@ -53,6 +55,7 @@ const DashboardPage: React.FC = () => {
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [compactMode, setCompactMode] = useState(false);
   const [floatingMenuPosition, setFloatingMenuPosition] = useState({ top: 80, right: 20 });
+  const [miniChatOpen, setMiniChatOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -251,7 +254,7 @@ const DashboardPage: React.FC = () => {
           {compactMode ? <Maximize className="w-5 h-5" /> : <Minimize className="w-5 h-5" />}
         </button>
         <button
-          onClick={() => navigate('/chat')}
+          onClick={() => setMiniChatOpen(true)}
           className="bg-blue-500 text-white p-3 rounded-full shadow-lg hover:bg-blue-600 transition-colors hover:scale-110"
           title="AI 채팅"
         >
@@ -293,9 +296,10 @@ const DashboardPage: React.FC = () => {
                     onClick={() => handleFeatureClick(feature)}
                   >
                     <div className="flex items-center space-x-3">
-                      <div className="w-10 h-10 bg-gray-50 rounded-lg flex items-center justify-center">
-                        <IconComponent className="w-5 h-5 text-gray-700" />
-                      </div>
+                      <FeatureLogo 
+                        displayName={feature.display_name}
+                        size="small"
+                      />
                       <div className="flex-1 min-w-0">
                         <h3 className="font-medium text-gray-900 truncate">{feature.display_name}</h3>
                         <p className="text-sm text-gray-500 truncate">{getCategoryDisplayName(feature.category)}</p>
@@ -415,10 +419,13 @@ const DashboardPage: React.FC = () => {
                       <div className="absolute inset-0 bg-white/20 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
                       
                       {/* Content */}
-                      <div className="relative">
+                                              <div className="relative">
                         <div className="flex items-start justify-between mb-4">
-                          <div className="w-12 h-12 bg-white rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform duration-300 shadow-sm">
-                            <IconComponent className="w-6 h-6 text-gray-700" />
+                          <div className="group-hover:scale-110 transition-transform duration-300">
+                                                         <FeatureLogo 
+                               displayName={feature.display_name}
+                               size="medium"
+                             />
                           </div>
                           <div className="flex items-center space-x-1">
                             {(feature.is_external || feature.open_in_new_tab) && (
@@ -450,6 +457,20 @@ const DashboardPage: React.FC = () => {
           </div>
         </>
       )}
+
+      {/* 미니 LLM 채팅 */}
+      <MiniLLMChat
+        isOpen={miniChatOpen}
+        onClose={() => setMiniChatOpen(false)}
+        onExpand={(chatId) => {
+          setMiniChatOpen(false);
+          if (chatId) {
+            navigate(`/dashboard/chat?chatId=${chatId}`);
+          } else {
+            navigate('/dashboard/chat');
+          }
+        }}
+      />
     </div>
   );
 };

@@ -133,21 +133,22 @@ function App() {
               <Route path="flow-studio" element={<FlowStudioProjectsPage />} />
               <Route path="flow-studio/:projectId/workspace" element={<FlowStudioWorkspacePage />} />
               <Route path="flow-studio/:projectId/workspace/:flowId" element={<FlowStudioWorkspacePage />} />
+              <Route path="chat" element={<ChatPage />} />
+              <Route path="workspaces" element={<WorkspacesPage />} />
+              <Route path="workspaces/:id" element={<WorkspacesPage />} />
             </Route>
             
             {/* Profile Page */}
             <Route path="/profile" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
             
-            {/* Chat Page */}
-            <Route path="/chat" element={<ProtectedRoute><ChatPage /></ProtectedRoute>} />
-            
             {/* Standalone Protected Routes (without MainLayout) */}
             <Route path="/admin" element={<ProtectedRoute><AdminPage /></ProtectedRoute>} />
-            <Route path="/workspaces" element={<ProtectedRoute><WorkspacesPage /></ProtectedRoute>} />
-            <Route path="/workspaces/:id" element={<ProtectedRoute><WorkspacesPage /></ProtectedRoute>} />
             
             {/* Legacy Routes - Redirect to Dashboard */}
             <Route path="/main" element={<ProtectedRoute><MainPage /></ProtectedRoute>} />
+            <Route path="/chat" element={<Navigate to="/dashboard/chat" replace />} />
+            <Route path="/workspaces" element={<Navigate to="/dashboard/workspaces" replace />} />
+            <Route path="/workspaces/:id" element={<Navigate to="/dashboard/workspaces/:id" replace />} />
             <Route path="/rag-datasources" element={<Navigate to="/dashboard/rag-datasources" replace />} />
             <Route path="/flow-studio" element={<Navigate to="/dashboard/flow-studio" replace />} />
             <Route path="/flow-studio/:projectId/workspace" element={<Navigate to="/dashboard/flow-studio/:projectId/workspace" replace />} />

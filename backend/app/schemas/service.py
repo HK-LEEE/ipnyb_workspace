@@ -1,6 +1,7 @@
 from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime
+import uuid
 
 class ServiceBase(BaseModel):
     name: str = Field(..., description="서비스 고유명")
@@ -95,4 +96,11 @@ class ServicePermissionResponse(ServicePermissionBase):
     is_active: bool
 
     class Config:
-        from_attributes = True 
+        from_attributes = True
+    
+    @classmethod
+    def model_validate(cls, obj, **kwargs):
+        # UUID 객체를 문자열로 변환
+        if hasattr(obj, 'user_id') and isinstance(obj.user_id, uuid.UUID):
+            obj.user_id = str(obj.user_id)
+        return super().model_validate(obj, **kwargs) 

@@ -5,9 +5,9 @@ import {
   Database, Brain, Sparkles, Filter,
   ChevronLeft, ChevronRight, X, Copy,
   Loader2, AlertCircle, Check, Trash2, MoreHorizontal,
-  Home, Bell
+  Home, Bell, Maximize2, Minimize2
 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { llmChatApi } from '../services/llmChatApi';
 import {
   Chat, Message, Persona, LLMModel, RAGDataSource,
@@ -17,6 +17,7 @@ import MessageInput from '../components/chat/MessageInput';
 
 const ChatPage: React.FC = () => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   
   // 상태 관리
   const [chats, setChats] = useState<Chat[]>([]);
@@ -35,7 +36,8 @@ const ChatPage: React.FC = () => {
   const [isTyping, setIsTyping] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [showSettings, setShowSettings] = useState(false);
+  const [showSettings, setShowSettings] = useState(true);
+  const [isWideChat, setIsWideChat] = useState(false);
   const [pendingUserMessage, setPendingUserMessage] = useState<Message | null>(null);
   const [abortController, setAbortController] = useState<AbortController | null>(null);
   const [floatingMenuPosition, setFloatingMenuPosition] = useState({ top: 16, left: 64 });
@@ -101,6 +103,21 @@ const ChatPage: React.FC = () => {
       // 기본 모델 선택
       if (modelsData.length > 0) {
         setSelectedModel(modelsData[0].id);
+      }
+
+      // URL 파라미터에서 chatId 확인하여 해당 채팅 선택
+      const chatId = searchParams.get('chatId');
+      if (chatId && chatsData.length > 0) {
+        const targetChat = chatsData.find(chat => chat.id === chatId);
+        if (targetChat) {
+          await handleChatSelect(targetChat);
+          return;
+        }
+      }
+      
+      // 특정 채팅이 없으면 첫 번째 채팅 선택
+      if (chatsData.length > 0) {
+        await handleChatSelect(chatsData[0]);
       }
       
     } catch (error) {
@@ -282,47 +299,12 @@ const ChatPage: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-white flex flex-col">
-      {/* 상단 헤더 */}
-      <header className="bg-white border-b border-gray-200 px-6 py-3 flex items-center justify-between">
-        <div className="flex items-center space-x-4">
-          <button
-            onClick={() => navigate('/dashboard')}
-            className="flex items-center space-x-2 text-gray-700 hover:text-blue-600 transition-colors"
-          >
-            <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
-              <span className="text-white font-bold text-sm">M</span>
-            </div>
-            <span className="font-semibold text-lg">MAX</span>
-          </button>
-          <span className="text-gray-500 text-sm">Manufacturing AI & DX</span>
-        </div>
-        
-        <div className="flex items-center space-x-4">
-          <button
-            onClick={() => navigate('/dashboard')}
-            className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
-            title="홈으로"
-          >
-            <Home className="w-5 h-5" />
-          </button>
-          <button className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors relative">
-            <Bell className="w-5 h-5" />
-            <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full"></span>
-          </button>
-          <div className="flex items-center space-x-2 text-gray-700">
-            <User className="w-5 h-5" />
-            <div className="text-sm">
-              <div className="font-medium">Admin User</div>
-              <div className="text-gray-500 text-xs">admin@test.com</div>
-            </div>
-          </div>
-        </div>
-      </header>
+    <div className="flex h-screen bg-gray-50">
+      {/* 메인 컨테이너 */}
+      <div className="flex w-full">
+        {/* 왼쪽 사이드바 */}
+        <div className="w-64 bg-white border-r border-gray-200 flex flex-col h-screen">
 
-      <div className="flex flex-1">
-        {/* 사이드바 */}
-        <div className={`${sidebarOpen ? 'w-72' : 'w-12'} transition-all duration-300 bg-gray-50 border-r border-gray-200 flex flex-col`}>
         {/* 사이드바 헤더 */}
         <div className="p-4 border-b border-gray-200 flex items-center justify-between">
           {sidebarOpen && (
@@ -409,16 +391,7 @@ const ChatPage: React.FC = () => {
               </div>
             </div>
 
-            {/* 설정 버튼 */}
-            <div className="p-4 border-t border-gray-200">
-              <button
-                onClick={() => setShowSettings(!showSettings)}
-                className="w-full flex items-center space-x-2 text-gray-600 hover:text-gray-800 py-2"
-              >
-                <Settings className="w-4 h-4" />
-                <span>설정</span>
-              </button>
-            </div>
+
           </>
         )}
       </div>
@@ -438,13 +411,6 @@ const ChatPage: React.FC = () => {
             title="새 채팅"
           >
             <Plus className="w-5 h-5" />
-          </button>
-          <button
-            onClick={() => setShowSettings(!showSettings)}
-            className="bg-gray-600 text-white p-3 rounded-full shadow-lg hover:bg-gray-700 transition-colors hover:scale-110"
-            title="설정"
-          >
-            <Settings className="w-5 h-5" />
           </button>
         </div>
       )}
@@ -467,6 +433,24 @@ const ChatPage: React.FC = () => {
                   </div>
                 </div>
                 <div className="flex items-center space-x-2">
+                  <button
+                    onClick={() => setIsWideChat(!isWideChat)}
+                    className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                    title={isWideChat ? "채팅창 좁게" : "채팅창 넓게"}
+                  >
+                    {isWideChat ? (
+                      <Minimize2 className="w-4 h-4 text-gray-600" />
+                    ) : (
+                      <Maximize2 className="w-4 h-4 text-gray-600" />
+                    )}
+                  </button>
+                  <button
+                    onClick={() => setShowSettings(!showSettings)}
+                    className={`p-2 hover:bg-gray-100 rounded-lg transition-colors ${showSettings ? 'bg-gray-100' : ''}`}
+                    title="설정"
+                  >
+                    <Settings className="w-4 h-4 text-gray-600" />
+                  </button>
                   <button className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
                     <Share className="w-4 h-4 text-gray-600" />
                   </button>
@@ -482,12 +466,13 @@ const ChatPage: React.FC = () => {
               ref={messagesContainerRef}
               className="flex-1 overflow-y-auto p-6 space-y-6 bg-gradient-to-b from-gray-50 to-white"
             >
-              {messages.map((message) => (
-                <div
-                  key={message.id}
-                  className={`flex ${message.sender_type === 'USER' ? 'justify-end' : 'justify-start'} group`}
-                >
-                  <div className={`max-w-4xl ${message.sender_type === 'USER' ? 'ml-16' : 'mr-16'} relative`}>
+              <div className={`${!isWideChat ? 'max-w-4xl mx-auto' : ''}`}>
+                {messages.map((message) => (
+                  <div
+                    key={message.id}
+                    className={`flex ${message.sender_type === 'USER' ? 'justify-end' : 'justify-start'} group mb-6`}
+                  >
+                    <div className={`${isWideChat ? 'max-w-4xl' : 'max-w-2xl'} ${message.sender_type === 'USER' ? (isWideChat ? 'ml-16' : 'ml-8') : (isWideChat ? 'mr-16' : 'mr-8')} relative`}>
                     {/* 사용자 메시지 */}
                     {message.sender_type === 'USER' ? (
                       <div className="bg-gradient-to-r from-gray-700 to-gray-800 text-white rounded-2xl rounded-br-md px-6 py-4 shadow-lg">
@@ -557,48 +542,51 @@ const ChatPage: React.FC = () => {
                 </div>
               ))}
               
-              {isTyping && (
-                <div className="flex justify-start">
-                  <div className="max-w-3xl mr-12">
-                    <div className="bg-gray-100 border border-gray-200 rounded-lg px-4 py-3">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center space-x-2">
-                          <Bot className="w-4 h-4 text-gray-600" />
-                          <span className="text-sm text-gray-600">AI가 답변을 작성 중입니다</span>
-                          <div className="flex space-x-1">
-                            <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
-                            <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
-                            <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+                {isTyping && (
+                  <div className="flex justify-start">
+                    <div className={`${isWideChat ? 'max-w-3xl mr-12' : 'max-w-2xl mr-8'}`}>
+                      <div className="bg-gray-100 border border-gray-200 rounded-lg px-4 py-3">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center space-x-2">
+                            <Bot className="w-4 h-4 text-gray-600" />
+                            <span className="text-sm text-gray-600">AI가 답변을 작성 중입니다</span>
+                            <div className="flex space-x-1">
+                              <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
+                              <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
+                              <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+                            </div>
                           </div>
+                          <button
+                            onClick={handleStopResponse}
+                            className="text-red-600 hover:text-red-700 hover:bg-red-50 p-1 rounded transition-colors"
+                            title="응답 중지"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
                         </div>
-                        <button
-                          onClick={handleStopResponse}
-                          className="text-red-600 hover:text-red-700 hover:bg-red-50 p-1 rounded transition-colors"
-                          title="응답 중지"
-                        >
-                          <X className="w-4 h-4" />
-                        </button>
                       </div>
                     </div>
                   </div>
-                </div>
-              )}
-              
-              <div ref={messagesEndRef} />
+                )}
+                
+                <div ref={messagesEndRef} />
+              </div>
             </div>
 
             {/* 메시지 입력 영역 */}
-            <MessageInput
-              value={newMessage}
-              onChange={setNewMessage}
-              onSend={handleSendMessage}
-              onStop={handleStopResponse}
-              disabled={isLoading}
-              isTyping={isTyping}
-              ragSources={ragSources}
-              selectedRAGSources={selectedRAGSources}
-              onRAGSourcesChange={setSelectedRAGSources}
-            />
+            <div className="w-full">
+              <MessageInput
+                value={newMessage}
+                onChange={setNewMessage}
+                onSend={handleSendMessage}
+                onStop={handleStopResponse}
+                disabled={isLoading}
+                isTyping={isTyping}
+                ragSources={ragSources}
+                selectedRAGSources={selectedRAGSources}
+                onRAGSourcesChange={setSelectedRAGSources}
+              />
+            </div>
           </>
         ) : (
           /* 채팅 선택 안내 */
@@ -618,12 +606,11 @@ const ChatPage: React.FC = () => {
           </div>
         )}
       </div>
-      </div>
 
-      {/* 설정 패널 */}
+      {/* 설정 패널 - 오른쪽 사이드바 */}
       {showSettings && (
-        <div className="w-80 bg-white border-l border-gray-200 p-4">
-          <div className="flex items-center justify-between mb-4">
+        <div className="w-80 bg-white border-l border-gray-200 flex flex-col h-screen">
+          <div className="flex items-center justify-between p-4 border-b border-gray-200">
             <h3 className="text-lg font-semibold text-gray-800">설정</h3>
             <button
               onClick={() => setShowSettings(false)}
@@ -633,74 +620,77 @@ const ChatPage: React.FC = () => {
             </button>
           </div>
           
-          {/* 모델 선택 */}
-          <div className="mb-6">
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              <Brain className="w-4 h-4 inline mr-1" />
-              AI 모델
-            </label>
-            <select
-              value={selectedModel}
-              onChange={(e) => setSelectedModel(e.target.value)}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-gray-500"
-            >
-              {models.map(model => (
-                <option key={model.id} value={model.id}>
-                  {model.name} ({model.provider})
-                </option>
-              ))}
-            </select>
-          </div>
-          
-          {/* 페르소나 선택 */}
-          <div className="mb-6">
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              <User className="w-4 h-4 inline mr-1" />
-              페르소나
-            </label>
-            <select
-              value={selectedPersona || ''}
-              onChange={(e) => setSelectedPersona(e.target.value ? parseInt(e.target.value) : null)}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-gray-500"
-            >
-              <option value="">기본 설정</option>
-              {personas.map(persona => (
-                <option key={persona.id} value={persona.id}>
-                  {persona.persona_name}
-                </option>
-              ))}
-            </select>
-          </div>
-          
-          {/* RAG 데이터 소스 선택 */}
-          <div className="mb-6">
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              <Database className="w-4 h-4 inline mr-1" />
-              데이터 소스
-            </label>
-            <div className="space-y-2 max-h-40 overflow-y-auto">
-              {ragSources.map(source => (
-                <label key={source.id} className="flex items-center space-x-2">
-                  <input
-                    type="checkbox"
-                    checked={selectedRAGSources.includes(source.id)}
-                    onChange={(e) => {
-                      if (e.target.checked) {
-                        setSelectedRAGSources([...selectedRAGSources, source.id]);
-                      } else {
-                        setSelectedRAGSources(selectedRAGSources.filter(id => id !== source.id));
-                      }
-                    }}
-                    className="w-4 h-4 text-gray-600 rounded border-gray-300"
-                  />
-                  <span className="text-sm text-gray-700">{source.name}</span>
-                  <span className="text-xs text-gray-500">({source.document_count})</span>
-                </label>
-              ))}
+          <div className="flex-1 overflow-y-auto p-4 space-y-6">
+            {/* 모델 선택 */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                <Brain className="w-4 h-4 inline mr-1" />
+                AI 모델
+              </label>
+              <select
+                value={selectedModel}
+                onChange={(e) => setSelectedModel(e.target.value)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-gray-500"
+              >
+                {models.map(model => (
+                  <option key={model.id} value={model.id}>
+                    {model.name} ({model.provider})
+                  </option>
+                ))}
+              </select>
+            </div>
+            
+            {/* 페르소나 선택 */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                <User className="w-4 h-4 inline mr-1" />
+                페르소나
+              </label>
+              <select
+                value={selectedPersona || ''}
+                onChange={(e) => setSelectedPersona(e.target.value ? parseInt(e.target.value) : null)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-gray-500"
+              >
+                <option value="">기본 설정</option>
+                {personas.map(persona => (
+                  <option key={persona.id} value={persona.id}>
+                    {persona.persona_name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            
+            {/* RAG 데이터 소스 선택 */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                <Database className="w-4 h-4 inline mr-1" />
+                데이터 소스
+              </label>
+              <div className="space-y-2 max-h-40 overflow-y-auto">
+                {ragSources.map(source => (
+                  <label key={source.id} className="flex items-center space-x-2">
+                    <input
+                      type="checkbox"
+                      checked={selectedRAGSources.includes(source.id)}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSelectedRAGSources([...selectedRAGSources, source.id]);
+                        } else {
+                          setSelectedRAGSources(selectedRAGSources.filter(id => id !== source.id));
+                        }
+                      }}
+                      className="w-4 h-4 text-gray-600 rounded border-gray-300"
+                    />
+                    <span className="text-sm text-gray-700">{source.name}</span>
+                    <span className="text-xs text-gray-500">({source.document_count})</span>
+                  </label>
+                ))}
+              </div>
             </div>
           </div>
         </div>
-      )}
+        )}
+      </div>
 
       {/* 에러 토스트 */}
       {error && (

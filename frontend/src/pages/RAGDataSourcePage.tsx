@@ -18,7 +18,9 @@ import {
   AlertCircle,
   CheckCircle,
   Loader,
-  RefreshCw
+  RefreshCw,
+  Bell,
+  Sparkles
 } from 'lucide-react';
 import toast, { Toaster } from 'react-hot-toast';
 
@@ -188,48 +190,25 @@ const RAGDataSourcePage: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-surface-light">
-      {/* Header */}
-      <div className="bg-white border-b border-neutral-200 shadow-soft">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between py-6">
-            <div>
-              <h1 className="text-3xl font-bold text-neutral-900">RAG 데이터소스</h1>
-              <p className="text-neutral-600 mt-1">벡터 데이터베이스 및 문서 관리</p>
-            </div>
-            
-            <button
-              onClick={() => setIsCreateModalOpen(true)}
-              className="bg-gradient-primary text-white px-4 py-2 rounded-lg hover:shadow-medium transition-all duration-200 flex items-center space-x-2"
-            >
-              <Plus className="h-5 w-5" />
-              <span>새 데이터소스</span>
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <div className="max-w-7xl mx-auto">
-        {/* 헤더 */}
-        <div className="mb-8">
-          <div className="flex justify-between items-center">
-            <div>
-              <h1 className="text-3xl font-bold text-gray-900">RAG 데이터소스</h1>
-              <p className="text-gray-600 mt-2">
-                AI 모델이 사용할 문서들을 관리하고 검색할 수 있습니다
-              </p>
-            </div>
-            <div className="flex gap-3">
-              <button
-                onClick={() => refetchDataSources()}
-                className="bg-gray-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-gray-700"
-                disabled={isLoadingDataSources}
-              >
-                <RefreshCw className={`h-5 w-5 ${isLoadingDataSources ? 'animate-spin' : ''}`} />
-                새로고침
-              </button>
-            </div>
-          </div>
+    <div className="min-h-screen bg-gray-50">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        {/* 액션 버튼들 */}
+        <div className="flex items-center justify-end space-x-3 mb-6">
+          <button
+            onClick={() => refetchDataSources()}
+            className="flex items-center space-x-2 px-4 py-2 bg-white border border-gray-300 rounded-xl hover:bg-gray-50 transition-colors shadow-sm"
+          >
+            <RefreshCw className="w-4 h-4" />
+            <span>새로고침</span>
+          </button>
+          
+          <button
+            onClick={() => setIsCreateModalOpen(true)}
+            className="flex items-center space-x-2 px-4 py-2 bg-gray-900 text-white rounded-xl hover:bg-gray-800 transition-colors shadow-sm hover:shadow-md"
+          >
+            <Plus className="w-4 h-4" />
+            <span>새 데이터소스</span>
+          </button>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

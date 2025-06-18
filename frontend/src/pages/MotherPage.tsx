@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import FeatureLogo from '../components/common/FeatureLogo';
 
 interface UserInfo {
   id: string;
@@ -305,109 +306,12 @@ const MainPage: React.FC = () => {
       return <img src={service.icon_url} alt={service.service_display_name} className="w-8 h-8" />;
     }
     
-    // 기본 아이콘 설정 (이모지)
-    const iconMap: { [key: string]: string } = {
-      // 핵심 기능
-      'jupyter': '📓',
-      'notebook': '📔',
-      'admin': '⚙️',
-      'dashboard': '📊',
-      'analytics': '📈',
-      'workspaces': '💼',
-      'workspace': '💼',
-      'files': '📁',
-      'file': '📄',
-      
-      // AI 관련
-      'ai': '🤖',
-      'chat': '💬',
-      'llm': '🧠',
-      'machine_learning': '🎯',
-      'deep_learning': '🔬',
-      
-      // 개발도구
-      'api': '🔌',
-      'code': '💻',
-      'terminal': '⌨️',
-      'git': '🌳',
-      'docker': '🐳',
-      'github': '🐙',
-      
-      // 관리도구
-      'settings': '⚙️',
-      'monitoring': '📊',
-      'logs': '📜',
-      'backup': '💾',
-      
-      // 보안
-      'security': '🔐',
-      'auth': '🔑',
-      'encryption': '🛡️',
-      
-      // 클라우드/인프라
-      'cloud': '☁️',
-      'server': '🖥️',
-      'database': '🗄️',
-      'storage': '💿',
-      
-      // 통신/협업
-      'integration': '🔗',
-      'notification': '🔔',
-      'email': '📧',
-      'user': '👤',
-      'team': '👥',
-      'meeting': '🤝',
-      
-      // 문서/리포트
-      'help': '❓',
-      'docs': '📚',
-      'documentation': '📖',
-      'project': '📋',
-      'report': '📄',
-      'calendar': '📅',
-      'excel': '📗',
-      'pdf': '📕',
-      
-      // 웹/브라우저
-      'browser': '🌐',
-      'website': '🌍',
-      'web': '🌐',
-      
-      // 카테고리별
-      'core': '⭐',
-      'analysis': '📊',
-      'utility': '🛠️',
-      'collaboration': '🤝',
-      'reporting': '📈'
-    };
-    
-    // 서비스명에서 아이콘 찾기
-    const serviceNameLower = service.service_name.toLowerCase();
-    const categoryLower = service.category?.toLowerCase() || '';
-    
-    // 이모지 또는 아이콘 URL 직접 제공된 경우
-    const directIcon = service.icon_url;
-    if (directIcon && !directIcon.startsWith('http') && !directIcon.startsWith('/')) {
-      return (
-        <span 
-          className="text-2xl" 
-          style={{ fontFamily: 'Apple Color Emoji, Segoe UI Emoji, Noto Color Emoji, sans-serif' }}
-        >
-          {directIcon}
-        </span>
-      );
-    }
-    
-    // 매핑에서 아이콘 찾기 (서비스명 우선, 그 다음 카테고리)
-    const icon = iconMap[serviceNameLower] || iconMap[categoryLower] || '🔧';
-    
+    // FeatureLogo 컴포넌트 사용
     return (
-      <span 
-        className="text-2xl" 
-        style={{ fontFamily: 'Apple Color Emoji, Segoe UI Emoji, Noto Color Emoji, sans-serif' }}
-      >
-        {icon}
-      </span>
+      <FeatureLogo 
+        displayName={service.service_display_name}
+        size="small"
+      />
     );
   };
 

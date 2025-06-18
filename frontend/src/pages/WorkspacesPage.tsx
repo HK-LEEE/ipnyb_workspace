@@ -18,7 +18,9 @@ import {
   Code,
   Terminal,
   RefreshCw,
-  ExternalLink
+  ExternalLink,
+  Bell,
+  Sparkles
 } from 'lucide-react';
 import { workspaceAPI } from '../services/api';
 import { checkAuthAndRedirect, getAuthHeader, getAuthHeaderForUpload } from '../utils/auth';
@@ -363,32 +365,19 @@ const WorkspacesPage: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-white">
-      {/* Header */}
-      <div className="bg-gradient-to-br from-gray-50 to-white border-b border-gray-100">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-2xl font-bold text-gray-900 font-display">
-                JupyterLab 워크스페이스
-              </h1>
-              <p className="text-gray-600 mt-1">
-                데이터 분석과 머신러닝을 위한 개발 환경을 관리합니다
-              </p>
-            </div>
-            
-            <button
-              onClick={() => setShowCreateModal(true)}
-              className="flex items-center space-x-2 px-4 py-2 bg-gray-900 text-white rounded-xl hover:bg-gray-800 transition-colors duration-200 shadow-sm hover:shadow-md"
-            >
-              <Plus className="w-4 h-4" />
-              <span>새 워크스페이스</span>
-            </button>
-          </div>
-        </div>
-      </div>
-
+    <div className="min-h-screen bg-gray-50">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        {/* 액션 버튼 */}
+        <div className="flex items-center justify-end mb-6">
+          <button
+            onClick={() => setShowCreateModal(true)}
+            className="flex items-center space-x-2 px-4 py-2 bg-gray-900 text-white rounded-xl hover:bg-gray-800 transition-colors duration-200 shadow-sm hover:shadow-md"
+          >
+            <Plus className="w-4 h-4" />
+            <span>새 워크스페이스</span>
+          </button>
+        </div>
+
         <div className="grid grid-cols-12 gap-6 h-[calc(100vh-200px)]">
           {/* 왼쪽: 워크스페이스 목록 */}
           <div className="col-span-4 bg-gray-50 rounded-2xl border border-gray-100 overflow-hidden">

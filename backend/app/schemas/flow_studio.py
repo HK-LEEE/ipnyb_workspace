@@ -38,6 +38,30 @@ class ProjectResponse(ProjectBase):
     created_at: datetime
     updated_at: datetime
     flows: List["FlowResponse"] = []
+    
+    @classmethod
+    def model_validate(cls, obj, **kwargs):
+        # UUID 객체를 문자열로 변환
+        if hasattr(obj, 'id') and isinstance(obj.id, uuid.UUID):
+            obj.id = str(obj.id)
+        if hasattr(obj, 'user_id') and isinstance(obj.user_id, uuid.UUID):
+            obj.user_id = str(obj.user_id)
+        if hasattr(obj, 'group_id') and obj.group_id and isinstance(obj.group_id, uuid.UUID):
+            obj.group_id = str(obj.group_id)
+        
+        # flows 리스트 내부의 각 Flow 객체들도 UUID 변환
+        if hasattr(obj, 'flows') and obj.flows:
+            for flow in obj.flows:
+                if hasattr(flow, 'id') and isinstance(flow.id, uuid.UUID):
+                    flow.id = str(flow.id)
+                if hasattr(flow, 'user_id') and isinstance(flow.user_id, uuid.UUID):
+                    flow.user_id = str(flow.user_id)
+                if hasattr(flow, 'group_id') and flow.group_id and isinstance(flow.group_id, uuid.UUID):
+                    flow.group_id = str(flow.group_id)
+                if hasattr(flow, 'project_id') and isinstance(flow.project_id, uuid.UUID):
+                    flow.project_id = str(flow.project_id)
+        
+        return super().model_validate(obj, **kwargs)
 
 class FlowBase(BaseModel):
     """플로우 기본 스키마"""
@@ -74,6 +98,19 @@ class FlowResponse(FlowBase):
     owner_type: str
     created_at: datetime
     updated_at: datetime
+    
+    @classmethod
+    def model_validate(cls, obj, **kwargs):
+        # UUID 객체를 문자열로 변환
+        if hasattr(obj, 'id') and isinstance(obj.id, uuid.UUID):
+            obj.id = str(obj.id)
+        if hasattr(obj, 'project_id') and isinstance(obj.project_id, uuid.UUID):
+            obj.project_id = str(obj.project_id)
+        if hasattr(obj, 'user_id') and isinstance(obj.user_id, uuid.UUID):
+            obj.user_id = str(obj.user_id)
+        if hasattr(obj, 'group_id') and obj.group_id and isinstance(obj.group_id, uuid.UUID):
+            obj.group_id = str(obj.group_id)
+        return super().model_validate(obj, **kwargs)
 
 class FlowSaveRequest(BaseModel):
     """플로우 저장 요청 스키마"""
@@ -178,6 +215,17 @@ class FlowExecutionResponse(FlowExecutionBase):
     user_id: str
     started_at: datetime
     completed_at: Optional[datetime] = None
+    
+    @classmethod
+    def model_validate(cls, obj, **kwargs):
+        # UUID 객체를 문자열로 변환
+        if hasattr(obj, 'id') and isinstance(obj.id, uuid.UUID):
+            obj.id = str(obj.id)
+        if hasattr(obj, 'flow_id') and isinstance(obj.flow_id, uuid.UUID):
+            obj.flow_id = str(obj.flow_id)
+        if hasattr(obj, 'user_id') and isinstance(obj.user_id, uuid.UUID):
+            obj.user_id = str(obj.user_id)
+        return super().model_validate(obj, **kwargs)
 
 class FlowPublishRequest(BaseModel):
     """플로우 배포 요청 스키마"""

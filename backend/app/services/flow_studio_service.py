@@ -12,7 +12,7 @@ from ..schemas.flow_studio import (
     ProjectCreate, ProjectUpdate, FlowCreate, FlowUpdate,
     ComponentTemplateCreate, FlowComponentCreate, FlowComponentUpdate,
     FlowConnectionCreate, FlowExecutionCreate, FlowSaveRequest,
-    FlowPublishRequest, FlowPublishResponse
+    FlowPublishRequest, FlowPublishResponse, ProjectResponse, FlowResponse
 )
 
 logger = logging.getLogger(__name__)
@@ -46,7 +46,7 @@ class FlowStudioService:
     
     # ==================== Project 관련 메서드 ====================
     
-    async def get_projects(self, user_info: dict, skip: int = 0, limit: int = 100) -> List[Project]:
+    async def get_projects(self, user_info: dict, skip: int = 0, limit: int = 100) -> List[ProjectResponse]:
         """사용자의 프로젝트 목록 조회 (권한 기반)"""
         try:
             access_filter = self._get_user_access_filter(user_info)
@@ -56,13 +56,19 @@ class FlowStudioService:
                 .offset(skip).limit(limit)\
                 .all()
             
+            # ORM 객체를 Pydantic 스키마로 명시적 변환
+            project_responses = []
+            for project in projects:
+                project_response = ProjectResponse.model_validate(project)
+                project_responses.append(project_response)
+            
             logger.info(f"프로젝트 {len(projects)}개 조회 완료 - 사용자: {user_info['user_id']}")
-            return projects
+            return project_responses
         except Exception as e:
             logger.error(f"프로젝트 목록 조회 실패: {e}")
             raise
     
-    async def get_project_by_id(self, project_id: str, user_info: dict) -> Optional[Project]:
+    async def get_project_by_id(self, project_id: str, user_info: dict) -> Optional[ProjectResponse]:
         """프로젝트 단일 조회 (권한 확인)"""
         try:
             access_filter = self._get_user_access_filter(user_info)
@@ -73,14 +79,15 @@ class FlowStudioService:
             
             if project:
                 logger.info(f"프로젝트 조회 완료: {project_id}")
+                return ProjectResponse.model_validate(project)
             else:
                 logger.warning(f"프로젝트 접근 권한 없음 또는 존재하지 않음: {project_id}")
-            return project
+                return None
         except Exception as e:
             logger.error(f"프로젝트 조회 실패: {e}")
             raise
     
-    async def create_project(self, user_info: dict, project_data: ProjectCreate) -> Project:
+    async def create_project(self, user_info: dict, project_data: ProjectCreate) -> ProjectResponse:
         """프로젝트 생성 (그룹 정보 포함)"""
         try:
             user_id = user_info["user_id"]
@@ -118,17 +125,26 @@ class FlowStudioService:
             self.db.refresh(project)
             
             logger.info(f"프로젝트 생성 완료: {project.id} - {project.name} (소유자: {project.owner_type})")
-            return project
+            return ProjectResponse.model_validate(project)
         except Exception as e:
             self.db.rollback()
             logger.error(f"프로젝트 생성 실패: {e}")
             raise
     
     async def update_project(self, project_id: str, user_info: dict, 
-                           project_data: ProjectUpdate) -> Optional[Project]:
+                           project_data: ProjectUpdate) -> Optional[ProjectResponse]:
         """프로젝트 수정 (권한 확인)"""
         try:
-            project = await self.get_project_by_id(project_id, user_info)
+            project_response = await self.get_project_by_id(project_id, user_info)
+            if not project_response:
+                return None
+            
+            # ORM 객체 다시 조회 (수정을 위해)
+            access_filter = self._get_user_access_filter(user_info)
+            project = self.db.query(Project)\
+                .filter(and_(Project.id == project_id, access_filter))\
+                .first()
+            
             if not project:
                 return None
             
@@ -145,7 +161,7 @@ class FlowStudioService:
             self.db.refresh(project)
             
             logger.info(f"프로젝트 수정 완료: {project_id}")
-            return project
+            return ProjectResponse.model_validate(project)
         except Exception as e:
             self.db.rollback()
             logger.error(f"프로젝트 수정 실패: {e}")
@@ -179,7 +195,7 @@ class FlowStudioService:
     # ==================== Flow 관련 메서드 ====================
     
     async def get_flows(self, project_id: str, user_info: dict, 
-                       skip: int = 0, limit: int = 100) -> List[FlowStudioFlow]:
+                       skip: int = 0, limit: int = 100) -> List[FlowResponse]:
         """프로젝트의 플로우 목록 조회 (권한 확인)"""
         try:
             # 프로젝트 소유권 확인
@@ -193,8 +209,14 @@ class FlowStudioService:
                 .offset(skip).limit(limit)\
                 .all()
             
+            # ORM 객체를 Pydantic 스키마로 명시적 변환
+            flow_responses = []
+            for flow in flows:
+                flow_response = FlowResponse.model_validate(flow)
+                flow_responses.append(flow_response)
+            
             logger.info(f"플로우 {len(flows)}개 조회 완료 - 프로젝트: {project_id}")
-            return flows
+            return flow_responses
         except Exception as e:
             logger.error(f"플로우 목록 조회 실패: {e}")
             raise

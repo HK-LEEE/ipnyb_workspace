@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Outlet, useNavigate } from 'react-router-dom';
+import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { 
   User,
   Settings,
@@ -23,6 +23,7 @@ const MainLayout: React.FC = () => {
   });
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const navigate = useNavigate();
+  const location = useLocation();
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -39,6 +40,18 @@ const MainLayout: React.FC = () => {
   const handleLogout = () => {
     localStorage.removeItem('token');
     navigate('/login');
+  };
+
+  // 현재 페이지 제목 가져오기
+  const getCurrentPageTitle = () => {
+    const path = location.pathname;
+    if (path === '/dashboard') return 'Dashboard';
+    if (path.startsWith('/dashboard/chat')) return 'MAX LLM';
+    if (path.startsWith('/dashboard/workspaces')) return 'MAX Workspace';
+    if (path.startsWith('/dashboard/rag-datasources')) return 'MAX RAG';
+    if (path.startsWith('/dashboard/llmops')) return 'LLMOps';
+    if (path.startsWith('/dashboard/flow-studio')) return 'Flow Studio';
+    return 'Dashboard';
   };
 
   return (
@@ -61,7 +74,7 @@ const MainLayout: React.FC = () => {
                 </div>
               </div>
               <div>
-                <h1 className="text-xl font-bold text-gray-900 font-display">MAX</h1>
+                <h1 className="text-xl font-bold text-gray-900 font-display">{getCurrentPageTitle()}</h1>
                 <p className="text-xs text-gray-500">Manufacturing AI & DX</p>
               </div>
             </div>

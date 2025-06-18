@@ -85,6 +85,37 @@ class FeatureResponse(BaseModel):
     class Config:
         from_attributes = True
 
+def generate_feature_abbreviation(display_name: str) -> str:
+    """기능명에서 약어를 자동 생성하는 함수"""
+    import re
+    
+    # 공백이나 특수문자로 단어 분리
+    words = re.split(r'[\s\-_\.]+', display_name)
+    words = [word for word in words if word]
+    
+    abbreviation = ''
+    
+    # 영어 단어들의 첫 글자만 추출
+    for word in words:
+        if word:
+            first_char = word[0].upper()
+            # 영어 알파벳인지 확인
+            if re.match(r'[A-Z]', first_char):
+                abbreviation += first_char
+                # 최대 3글자까지만
+                if len(abbreviation) >= 3:
+                    break
+    
+    # 약어가 없으면 첫 번째 영어 문자 사용
+    if not abbreviation:
+        for char in display_name:
+            if re.match(r'[A-Za-z]', char):
+                abbreviation = char.upper()
+                break
+    
+    # 여전히 없으면 기본값
+    return abbreviation or 'F'
+
 def create_feature_response(feature):
     """Feature 모델을 FeatureResponse로 변환하는 헬퍼 함수"""
     return FeatureResponse(
@@ -914,12 +945,15 @@ async def create_feature(
             detail="이미 존재하는 기능명입니다."
         )
     
+    # 아이콘이 제공되지 않았으면 자동 생성
+    icon = request.icon if request.icon else generate_feature_abbreviation(request.display_name)
+    
     feature = Feature(
         name=request.name,
         display_name=request.display_name,
         description=request.description,
         category_id=request.category_id,
-        icon=request.icon,
+        icon=icon,
         url_path=request.url_path,
         is_external=request.is_external,
         open_in_new_tab=request.open_in_new_tab,
@@ -969,10 +1003,13 @@ async def update_feature(
             detail="기능을 찾을 수 없습니다."
         )
     
+    # 아이콘이 제공되지 않았으면 자동 생성
+    icon = request.icon if request.icon else generate_feature_abbreviation(request.display_name)
+    
     feature.display_name = request.display_name
     feature.description = request.description
     feature.category_id = request.category_id
-    feature.icon = request.icon
+    feature.icon = icon
     feature.url_path = request.url_path
     feature.is_external = request.is_external
     feature.open_in_new_tab = request.open_in_new_tab
