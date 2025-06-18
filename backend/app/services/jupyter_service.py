@@ -378,28 +378,36 @@ class JupyterService:
         try:
             process = self.processes[workspace_id]
             
-            # Windows에서는 CTRL_BREAK_EVENT 사용
-            if os.name == 'nt':
-                try:
-                    # Windows에서 우아한 종료 시도
-                    process.send_signal(signal.CTRL_BREAK_EVENT)
-                    process.wait(timeout=5)
-                except (subprocess.TimeoutExpired, OSError):
-                    # 강제 종료
-                    process.terminate()
+            # 크로스 플랫폼 프로세스 종료
+            try:
+                # 먼저 우아한 종료 시도
+                if os.name == 'nt':
+                    # Windows에서는 CTRL_BREAK_EVENT 사용
                     try:
-                        process.wait(timeout=5)
-                    except subprocess.TimeoutExpired:
-                        process.kill()
-                        process.wait()
-            else:
-                # Linux/Mac에서는 SIGTERM 사용
-                process.send_signal(signal.SIGTERM)
+                        process.send_signal(signal.CTRL_BREAK_EVENT)
+                    except OSError:
+                        # CTRL_BREAK_EVENT가 실패하면 SIGTERM으로 대체
+                        process.terminate()
+                else:
+                    # Unix 계열(Linux/Mac)에서는 SIGTERM 사용
+                    process.send_signal(signal.SIGTERM)
+                
+                # 프로세스 종료 대기
                 try:
                     process.wait(timeout=10)
                 except subprocess.TimeoutExpired:
-                    process.send_signal(signal.SIGKILL)
+                    # 우아한 종료가 실패하면 강제 종료
+                    process.kill()
                     process.wait()
+                    
+            except (OSError, subprocess.SubprocessError) as e:
+                logger.warning(f"프로세스 종료 중 오류 발생: {e}")
+                # 최후의 수단으로 강제 종료
+                try:
+                    process.kill()
+                    process.wait()
+                except:
+                    pass
             
             del self.processes[workspace_id]
             print(f"Jupyter Lab 정상 종료 - workspace_id: {workspace_id}")
