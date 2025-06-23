@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     
     # Legacy 호환성 - 기존 설정들은 유지
     mysql_database_url: str = os.getenv("MYSQL_DATABASE_URL", "mysql+pymysql://test:test@localhost:3306/jupyter_platform")
-    mssql_database_url: str = os.getenv("MSSQL_DATABASE_URL", "mssql+pyodbc://sa:password@localhost:1433/jupyter_platform?driver=ODBC+Driver+17+for+SQL+Server")
+    mssql_database_url: str = os.getenv("MSSQL_DATABASE_URL", "mssql+pyodbc://sa:password@localhost:1433/jupyter_platform?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes")
     
     # Security & JWT Configuration
     secret_key: str = os.getenv("SECRET_KEY", "your-secret-key-here")
